@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "status": "LIVE",
+  "boot_timestamp": 1770304043.232054,
+  "coherence": 1.0,
+  "axiom": 0.7866,
+  "hardware": {
+    "cpu": "Apple M3 Max",
+    "neural_engine": true,
+    "gpu_cores": 40
+  },
+  "flags": {
+    "hardware_bonded": true,
+    "organism_breathing": true,
+    "localhost_sovereign": true,
+    "axiom_locked": true
+  },
+  "boot_log": [
+    {
+      "timestamp": "2026-02-05T10:07:23.238764",
+      "level": "INFO",
+      "message": "Hardware detected: Apple M3 Max"
+    },
+    {
+      "timestamp": "2026-02-05T10:07:23.540930",
+      "level": "INFO",
+      "message": "Organism vitals: metabolism=1.18, immune=ALIGNED, resonance=100.00%"
+    },
+    {
+      "timestamp": "2026-02-05T10:07:23.841304",
+      "level": "INFO",
+      "message": "Sovereignty check complete. Axiom locked: True"
+    }
+  ]
+}
