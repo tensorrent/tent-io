@@ -1,0 +1,44 @@
+[
+  {
+    "timeline_id": "7fa8928fe6a386e4",
+    "timestamp": "2026-02-05T10:28:45.294827",
+    "type": "WAVE_COLLAPSE",
+    "data": {
+      "status": "WORTHY",
+      "coherence": 1.0,
+      "timeline_id": "706f619fa2f5d6fc"
+    },
+    "axiom": 0.7866
+  },
+  {
+    "timeline_id": "6a2d69be25610713",
+    "timestamp": "2026-02-05T10:29:12.504829",
+    "type": "WAVE_COLLAPSE",
+    "data": {
+      "status": "WORTHY",
+      "coherence": 1.0,
+      "timeline_id": "636fe907e1986caf"
+    },
+    "axiom": 0.7866
+  },
+  {
+    "timeline_id": "83003085105dc7d4",
+    "timestamp": "2026-02-05T10:34:53.467722",
+    "type": "WAVE_COLLAPSE",
+    "data": {
+      "status": "WORTHY",
+      "coherence": 1.0,
+      "timeline_id": "d6bde1a9911e84c8"
+    },
+    "axiom": 0.7866
+  },
+  {
+    "timeline_id": "6c533097b24cc981",
+    "timestamp": "2026-02-05T11:10:04.754807",
+    "type": "WAVE_COLLAPSE",
+    "data": {
+      "status": "WORTHY"
+    },
+    "axiom": 0.7866
+  }
+]
