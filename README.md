@@ -1,6 +1,6 @@
 # TENT — Tensor Engine for Nondeterministic Transcription
 
-**Bradley Wallace** — Independent Researcher  
+**Bradley Wallace** — Independent Researcher
 Licensed under the [Sovereign Integrity Protocol (SIP) v1.1](./SIP_LICENSE.md)
 
 ---
@@ -18,35 +18,34 @@ TENT eliminates:
 
 ## Architecture
 
-### Core Components
+### Core Engine
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| **TENT v9 Engine** | `src/tent_v9.py` | Production tensor engine (67K lines) |
-| **TENT v10 Vixel** | `src/tent_v10_vixel.py` | Vixel-integrated engine with scroll memory |
-| **TENT v10 Pipeline** | `src/tent_v10_pipeline.py` | Streaming pipeline for continuous inference |
-| **BRA Bridge** | `src/bra_bridge.py` | Python↔Rust FFI bridge for BRA kernel |
-| **BRA Kernel** | `src/bra_kernel.rs` | Rust implementation of core BRA operations |
-| **Production Build** | `src/tent_v9_production.py` | Deployment-hardened production variant |
+| File | Size | Purpose |
+|------|------|---------|
+| `src/tent_v9.py` | 68K | Core TENT v9 engine — production tensor routing |
+| `src/tent_v9_production.py` | 70K | Deployment-hardened production variant |
+| `src/tent_v10_vixel.py` | 28K | Vixel-integrated engine with scroll memory |
+| `src/tent_v10_pipeline.py` | 18K | Streaming pipeline for continuous inference |
+| `src/bra_bridge.py` | 5K | Python↔Rust FFI bridge |
+| `src/bra_kernel.rs` | 4K | Rust BRA kernel (compiled to cdylib) |
 
 ### BRA (Big Reveal Architecture)
 
-The BRA kernel computes **EigenCharge** triplets `(hash, trace, det)` for every data structure:
+EigenCharge triplets `(hash, trace, det)` for every data structure:
 
 ```
-hash  → FNV-1a (u64)     → Identity fingerprinting
-trace → Linear F369       → Within-class compactness measurement
-det   → Quadratic F369    → Between-class separation measurement
+hash  → FNV-1a (u64)      → Identity fingerprinting
+trace → Linear F369        → Within-class compactness
+det   → Quadratic F369     → Between-class separation
 ```
 
-This triplet has been formally proven equivalent to the MCR² (Maximal Coding Rate Reduction) objective from representation learning theory, operating entirely in integer space.
+Formally equivalent to MCR² (Maximal Coding Rate Reduction) from representation learning, operating entirely in integer space.
 
 ### Wallace Transform
 
-The core routing mechanism maps tensor elements through:
 1. **F369 Table** — Pre-computed integer lookup (12,000 entries)
-2. **Ulam Spiral Addressing** — Storage addresses on a prime-number spiral
-3. **Boustrophedon Siphon** — Alternating-direction traversal ensuring every voxel is visited exactly once
+2. **Ulam Spiral Addressing** — Storage addresses on prime-number spiral
+3. **Boustrophedon Siphon** — Alternating-direction traversal (every voxel visited exactly once)
 
 ---
 
@@ -55,7 +54,7 @@ The core routing mechanism maps tensor elements through:
 - **ADC Resolution**: 10¹⁴ bins (vs float's ~10⁷) — eliminates charge collisions
 - **Resonance Scoring**: 3-tier exact match (0/1/2) replaces continuous similarity
 - **Deterministic Reproducibility**: Same input → same output, always, on any hardware
-- **RC Stack Integration**: Every inference must pass through the constraint gate stack (RC1–RC14)
+- **RC Stack Integration**: Every inference passes through constraint gates RC1–RC14
 
 ---
 
@@ -63,24 +62,22 @@ The core routing mechanism maps tensor elements through:
 
 ```
 tent-io/
-├── README.md
-├── SIP_LICENSE.md
-├── build.sh                      # Build script for Rust BRA kernel
 ├── src/
-│   ├── tent_v9.py                # Core TENT engine
-│   ├── tent_v9_production.py     # Production variant
-│   ├── tent_v10_vixel.py         # Vixel-integrated engine
-│   ├── tent_v10_pipeline.py      # Streaming pipeline
-│   ├── bra_bridge.py             # Python↔Rust FFI bridge
-│   └── bra_kernel.rs             # Rust BRA kernel
+│   ├── tent_v9.py                # Core engine (68K)
+│   ├── tent_v9_production.py     # Production variant (70K)
+│   ├── tent_v10_vixel.py         # Vixel integration (28K)
+│   ├── tent_v10_pipeline.py      # Streaming pipeline (18K)
+│   ├── bra_bridge.py             # Python↔Rust FFI (5K)
+│   └── bra_kernel.rs             # Rust BRA kernel (4K)
 ├── tests/
-│   └── tent_tests.py             # Comprehensive test suite
+│   └── tent_tests.py             # Test suite
 ├── papers/
 │   ├── tent_v91_formal.pdf       # Formal specification
 │   ├── tent_v91_spec.pdf         # Technical specification
 │   ├── trinity_core_BRA.pdf      # BRA architecture paper
 │   └── trinity_core_BRA.tex      # LaTeX source
-└── docs/
+├── build.sh                      # Rust kernel build script
+└── SIP_LICENSE.md
 ```
 
 ---
@@ -88,25 +85,18 @@ tent-io/
 ## Quick Start
 
 ```bash
-# Build the Rust BRA kernel
 chmod +x build.sh && ./build.sh
-
-# Run the test suite
 python3 tests/tent_tests.py
-
-# Import the engine
 python3 -c "from src.tent_v9 import TENTEngine; print('TENT loaded')"
 ```
 
 ---
 
-## Formal Papers
+## Related Repositories
 
-| Paper | Description |
-|-------|-------------|
-| `tent_v91_formal.pdf` | Formal mathematical specification of TENT v9.1 |
-| `tent_v91_spec.pdf` | Technical implementation specification |
-| `trinity_core_BRA.pdf` | Big Reveal Architecture theory and proofs |
+- [Theory Paper](https://github.com/tensorrent/Unified-Stability-Epistemic-Limits-Nonlinear-mode-collaps-in-Coupled-Systems) — Unified Stability framework
+- [Sovereign Stack](https://github.com/tensorrent/Sovereign-Stack-Complete) — Full suite (includes TENT)
+- [RC Stack](https://github.com/tensorrent/RC1-Deterministic-Constraint-Projection-Layer) — Constraint gate architecture
 
 ---
 
@@ -114,9 +104,6 @@ python3 -c "from src.tent_v9 import TENTEngine; print('TENT loaded')"
 
 Copyright (c) 2026, Bradley Wallace (tensorrent). All rights reserved.
 
-This software is governed by the **Sovereign Integrity Protocol (SIP) License v1.1**:
-- **Personal/Educational Use**: Perpetual, worldwide, royalty-free.
-- **Commercial Use**: Expressly **PROHIBITED** without a prior written license agreement.
-- **Unlicensed Commercial Use**: Triggers automatic **8.4% perpetual gross profit penalty**.
+**SIP License v1.1** — Personal/educational: royalty-free. Commercial: **prohibited** without prior license. Unlicensed commercial use triggers **8.4% perpetual gross profit penalty**.
 
 See [SIP_LICENSE.md](./SIP_LICENSE.md) for full terms.
