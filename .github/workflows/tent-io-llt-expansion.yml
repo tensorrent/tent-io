@@ -68,6 +68,11 @@ on:
         required: false
         default: false
         type: boolean
+      enforce_promotion_decision_policy:
+        description: "When true, skip pointer promotion unless promotion_decision.current.json allows it."
+        required: false
+        default: false
+        type: boolean
       regression_min_delta_final_test_acc:
         description: "Fail when best final_test_acc delta vs previous is below this value."
         required: false
@@ -644,6 +649,9 @@ jobs:
           current = Path("tent_io/harness/reports/expansion/llt_expansion_best.current.json")
           audit = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.expansion_sweep.current.json")
           audit_history = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson")
+          decision = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
+          external_enabled = "${{ inputs.enable_external_eval }}" == "true"
 
           def load_json(path: Path) -> dict:
               if not path.exists():
@@ -656,6 +664,27 @@ jobs:
 
           if not candidate.exists():
               raise SystemExit(f"Missing candidate pointer: {candidate}")
+          if enforce_policy and external_enabled:
+              decision_payload = load_json(decision)
+              promotion_allowed = decision_payload.get("promotion_allowed") is True
+              if not promotion_allowed:
+                  payload = {
+                      "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                      "status": "skipped",
+                      "reason": "promotion_decision_blocked",
+                      "job": "expansion-sweep",
+                      "decision_path": str(decision),
+                      "decision_state": decision_payload.get("decision_state"),
+                      "promotion_allowed": decision_payload.get("promotion_allowed"),
+                      "promoted_from": str(candidate),
+                      "promoted_to": str(current),
+                  }
+                  audit.parent.mkdir(parents=True, exist_ok=True)
+                  audit.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+                  with audit_history.open("a", encoding="utf-8") as f:
+                      f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+                  print(json.dumps(payload, indent=2, ensure_ascii=True))
+                  raise SystemExit(0)
           before = load_json(current)
           after = load_json(candidate)
           current.parent.mkdir(parents=True, exist_ok=True)
@@ -796,6 +825,7 @@ jobs:
               f"conv=${{ inputs.regression_min_delta_conversational_test_acc }}, "
               f"drift=${{ inputs.regression_max_delta_drift }}`",
               f"- allow_baseline_change: `${{ inputs.allow_baseline_change }}`",
+              f"- enforce_promotion_decision_policy: `${{ inputs.enforce_promotion_decision_policy }}`",
               "",
               f"Artifacts: `{summary_path}`, `tent_io/harness/reports/expansion/llt_expansion_sweep.current.md`",
           ]
@@ -1283,6 +1313,9 @@ jobs:
           current = Path("tent_io/harness/reports/expansion/llt_expansion_best.current.json")
           audit = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.auto_all.current.json")
           audit_history = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson")
+          decision = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
+          external_enabled = "${{ inputs.enable_external_eval }}" == "true"
 
           def load_json(path: Path) -> dict:
               if not path.exists():
@@ -1295,6 +1328,27 @@ jobs:
 
           if not candidate.exists():
               raise SystemExit(f"Missing candidate pointer: {candidate}")
+          if enforce_policy and external_enabled:
+              decision_payload = load_json(decision)
+              promotion_allowed = decision_payload.get("promotion_allowed") is True
+              if not promotion_allowed:
+                  payload = {
+                      "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                      "status": "skipped",
+                      "reason": "promotion_decision_blocked",
+                      "job": "auto-all-compare",
+                      "decision_path": str(decision),
+                      "decision_state": decision_payload.get("decision_state"),
+                      "promotion_allowed": decision_payload.get("promotion_allowed"),
+                      "promoted_from": str(candidate),
+                      "promoted_to": str(current),
+                  }
+                  audit.parent.mkdir(parents=True, exist_ok=True)
+                  audit.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+                  with audit_history.open("a", encoding="utf-8") as f:
+                      f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+                  print(json.dumps(payload, indent=2, ensure_ascii=True))
+                  raise SystemExit(0)
           before = load_json(current)
           after = load_json(candidate)
           current.parent.mkdir(parents=True, exist_ok=True)
