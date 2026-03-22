@@ -1,0 +1,1061 @@
+name: Tent IO LLT Expansion
+
+on:
+  workflow_dispatch:
+    inputs:
+      profiles:
+        description: "Expansion profiles or alias (auto_top2, auto_all, or comma list)"
+        required: false
+        default: "auto_top2"
+        type: string
+      query:
+        description: "Pipeline query string"
+        required: false
+        default: "system profile check"
+        type: string
+      expansion_rank_by:
+        description: "Sweep ranking metric: final_test_acc, mmlu_test_acc, or conversational_logic_test_acc."
+        required: false
+        default: "mmlu_test_acc"
+        type: string
+      run_auto_all_compare:
+        description: "Also run auto_all and compare best-profile pointer"
+        required: false
+        default: false
+        type: boolean
+      min_best_final_test_acc:
+        description: "Fail workflow if best_profile.final_test_acc is below this floor"
+        required: false
+        default: "0.20"
+        type: string
+      min_delta_vs_previous_best:
+        description: "Optional fail floor on (current_best_acc - previous_best_acc). Example: -0.02 allows <=2pt drop; empty disables."
+        required: false
+        default: ""
+        type: string
+      promotion_history_keep_last:
+        description: "Optional trim for pointer promotion history NDJSON; empty disables."
+        required: false
+        default: ""
+        type: string
+      promotion_summary_top_k:
+        description: "Number of promotion leaderboard rows in step summary (default 3)."
+        required: false
+        default: "3"
+        type: string
+      promotion_summary_sort_by:
+        description: "Promotion leaderboard sort key: promotions, avg_final_test_acc, or last_promoted_utc."
+        required: false
+        default: "promotions"
+        type: string
+      promotion_summary_history_window:
+        description: "Optional recent-event window for promotion summary (0/all when empty)."
+        required: false
+        default: ""
+        type: string
+      split_gate_profile:
+        description: "Split-gate preset: off, strict_split_profile_v1, or strict_split_profile_v1_conservative."
+        required: false
+        default: "off"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tent-io-llt-expansion-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  expansion-sweep:
+    name: Run LLT expansion sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy
+
+      - name: Validate workflow numeric inputs
+        run: |
+          python3 - <<'PY'
+          import json
+
+          def parse_float(name: str, raw: str, allow_empty: bool = False) -> float | None:
+              if raw == "" and allow_empty:
+                  return None
+              try:
+                  return float(raw)
+              except Exception as exc:
+                  raise SystemExit(f"Invalid float for {name}: {raw!r}") from exc
+
+          def parse_int(name: str, raw: str, allow_empty: bool = False, min_value: int | None = None) -> int | None:
+              if raw == "" and allow_empty:
+                  return None
+              try:
+                  value = int(raw)
+              except Exception as exc:
+                  raise SystemExit(f"Invalid int for {name}: {raw!r}") from exc
+              if min_value is not None and value < min_value:
+                  raise SystemExit(f"Invalid {name}: {value} < {min_value}")
+              return value
+
+          floor = parse_float("min_best_final_test_acc", "${{ inputs.min_best_final_test_acc }}")
+          delta = parse_float("min_delta_vs_previous_best", "${{ inputs.min_delta_vs_previous_best }}", allow_empty=True)
+          keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
+          top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
+          window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
+          sort_by = "${{ inputs.promotion_summary_sort_by }}"
+          if sort_by not in {"promotions", "avg_final_test_acc", "last_promoted_utc"}:
+              raise SystemExit(f"Invalid promotion_summary_sort_by: {sort_by!r}")
+          split_gate_profile = "${{ inputs.split_gate_profile }}"
+          if split_gate_profile not in {"off", "strict_split_profile_v1", "strict_split_profile_v1_conservative"}:
+              raise SystemExit(f"Invalid split_gate_profile: {split_gate_profile!r}")
+          rank_by = "${{ inputs.expansion_rank_by }}"
+          if rank_by not in {"final_test_acc", "mmlu_test_acc", "conversational_logic_test_acc"}:
+              raise SystemExit(f"Invalid expansion_rank_by: {rank_by!r}")
+          profiles_raw = "${{ inputs.profiles }}".strip()
+          if profiles_raw == "":
+              raise SystemExit("Invalid profiles: empty input.")
+          query = "${{ inputs.query }}".strip()
+          if query == "":
+              raise SystemExit("Invalid query: empty input.")
+
+          print(
+              json.dumps(
+                  {
+                      "status": "ok",
+                      "min_best_final_test_acc": floor,
+                      "min_delta_vs_previous_best": delta,
+                      "promotion_history_keep_last": keep_last,
+                      "promotion_summary_top_k": top_k,
+                      "promotion_summary_history_window": window,
+                      "promotion_summary_sort_by": sort_by,
+                      "split_gate_profile": split_gate_profile,
+                      "expansion_rank_by": rank_by,
+                      "profiles": profiles_raw,
+                      "query": query,
+                  },
+                  indent=2,
+                  ensure_ascii=True,
+              )
+          )
+          PY
+
+      - name: Validate profile selection semantics
+        run: |
+          mkdir -p tent_io/harness/reports/expansion
+          python3 tent_io/harness/run_llt_expansion_sweep.py \
+            --profiles "${{ inputs.profiles }}" \
+            --rank-by "${{ inputs.expansion_rank_by }}" \
+            --validate-only \
+            > tent_io/harness/reports/expansion/llt_expansion_profiles_resolved.expansion_sweep.current.json
+
+      - name: Resolve split-gate profile (expansion-sweep)
+        run: |
+          profile="${{ inputs.split_gate_profile }}"
+          case "$profile" in
+            off)
+              echo "RESOLVED_LLT_MIN_MMLU_TEST_ACC=-1" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC=-1" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_MMLU_ACC=-1" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC=-1" >> "$GITHUB_ENV"
+              ;;
+            strict_split_profile_v1)
+              echo "RESOLVED_LLT_MIN_MMLU_TEST_ACC=0.215" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC=0.1384375" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_MMLU_ACC=0.215" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC=0.1384375" >> "$GITHUB_ENV"
+              ;;
+            strict_split_profile_v1_conservative)
+              echo "RESOLVED_LLT_MIN_MMLU_TEST_ACC=0.205" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC=0.130" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_MMLU_ACC=0.205" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC=0.130" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "Unknown split_gate_profile: $profile" >&2
+              exit 2
+              ;;
+          esac
+          echo "RESOLVED_SPLIT_GATE_PROFILE=$profile" >> "$GITHUB_ENV"
+
+      - name: Snapshot baseline pointer before sweep (expansion-sweep)
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          pointer = Path("tent_io/harness/reports/expansion/llt_expansion_best.current.json")
+          out = Path("tent_io/harness/reports/expansion/llt_expansion_baseline_before_expansion.current.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          if pointer.exists():
+              try:
+                  payload = json.loads(pointer.read_text(encoding="utf-8"))
+              except Exception:
+                  payload = {"status": "invalid_pointer_json"}
+          else:
+              payload = {"status": "missing_pointer"}
+          out.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Execute LLT expansion sweep
+        run: |
+          python3 tent_io/harness/run_llt_expansion_sweep.py \
+            --profiles "${{ inputs.profiles }}" \
+            --rank-by "${{ inputs.expansion_rank_by }}" \
+            --query "${{ inputs.query }}" \
+            --llt-min-mmlu-test-acc "${RESOLVED_LLT_MIN_MMLU_TEST_ACC}" \
+            --llt-min-conversational-test-acc "${RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC}" \
+            --llt-min-eval-mmlu-acc "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
+            --llt-min-eval-conversational-acc "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}" \
+            --best-pointer-out "tent_io/harness/reports/expansion/llt_expansion_best.candidate.json"
+
+      - name: Enforce best-profile accuracy floor
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          floor = float("${{ inputs.min_best_final_test_acc }}")
+          summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+          if not summary_path.exists():
+              raise SystemExit(f"Missing sweep summary: {summary_path}")
+          payload = json.loads(summary_path.read_text(encoding="utf-8"))
+          best = payload.get("best_profile") if isinstance(payload.get("best_profile"), dict) else {}
+          best_acc = best.get("final_test_acc")
+          if not isinstance(best_acc, (int, float)):
+              raise SystemExit(f"Missing numeric best_profile.final_test_acc in {summary_path}")
+          best_acc = float(best_acc)
+          if best_acc < floor:
+              raise SystemExit(
+                  f"best_profile.final_test_acc below floor: {best_acc} < {floor} "
+                  f"(profile={best.get('profile')})"
+              )
+          print(json.dumps({"status": "ok", "floor": floor, "best_final_test_acc": best_acc}, indent=2))
+          PY
+
+      - name: Enforce optional delta-vs-previous guard
+        if: ${{ inputs.min_delta_vs_previous_best != '' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          min_delta = float("${{ inputs.min_delta_vs_previous_best }}")
+          before_path = Path("tent_io/harness/reports/expansion/llt_expansion_baseline_before_expansion.current.json")
+          summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+
+          def load_json(path: Path) -> dict:
+              if not path.exists():
+                  return {}
+              try:
+                  payload = json.loads(path.read_text(encoding="utf-8"))
+                  return payload if isinstance(payload, dict) else {}
+              except Exception:
+                  return {}
+
+          before = load_json(before_path)
+          before_best = before.get("best_profile") if isinstance(before.get("best_profile"), dict) else {}
+          summary = load_json(summary_path)
+          after_best = summary.get("best_profile") if isinstance(summary.get("best_profile"), dict) else {}
+          before_acc = before_best.get("final_test_acc")
+          after_acc = after_best.get("final_test_acc")
+
+          if not isinstance(before_acc, (int, float)):
+              print(json.dumps({"status": "skipped", "reason": "previous_best_missing"}, indent=2))
+              raise SystemExit(0)
+          if not isinstance(after_acc, (int, float)):
+              raise SystemExit("Current best final_test_acc is missing/non-numeric.")
+
+          delta = float(after_acc) - float(before_acc)
+          if delta < min_delta:
+              raise SystemExit(
+                  f"Delta guard failed: {delta} < {min_delta} "
+                  f"(before={before_acc}, after={after_acc}, profile={after_best.get('profile')})"
+              )
+          print(json.dumps({"status": "ok", "min_delta": min_delta, "delta": delta, "before": before_acc, "after": after_acc}, indent=2))
+          PY
+
+      - name: Baseline drift alarm (expansion-sweep)
+        run: |
+          python3 tent_io/harness/check_llt_baseline_alarm.py \
+            --summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --expected-profile "expand_s2" \
+            --max-train-eval-drift 0.0 \
+            --require-train-gate-pass \
+            --require-replay-gate-pass \
+            --require-drift-gate-pass \
+            --min-train-mmlu "${RESOLVED_LLT_MIN_MMLU_TEST_ACC}" \
+            --min-train-conversational "${RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC}" \
+            --min-eval-mmlu "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
+            --min-eval-conversational "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}"
+
+      - name: Promote candidate pointer to current
+        run: |
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          candidate = Path("tent_io/harness/reports/expansion/llt_expansion_best.candidate.json")
+          current = Path("tent_io/harness/reports/expansion/llt_expansion_best.current.json")
+          audit = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.expansion_sweep.current.json")
+          audit_history = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson")
+
+          def load_json(path: Path) -> dict:
+              if not path.exists():
+                  return {}
+              try:
+                  payload = json.loads(path.read_text(encoding="utf-8"))
+                  return payload if isinstance(payload, dict) else {}
+              except Exception:
+                  return {}
+
+          if not candidate.exists():
+              raise SystemExit(f"Missing candidate pointer: {candidate}")
+          before = load_json(current)
+          after = load_json(candidate)
+          current.parent.mkdir(parents=True, exist_ok=True)
+          current.write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
+          before_best = before.get("best_profile") if isinstance(before.get("best_profile"), dict) else {}
+          after_best = after.get("best_profile") if isinstance(after.get("best_profile"), dict) else {}
+          payload = {
+              "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+              "status": "ok",
+              "job": "expansion-sweep",
+              "promoted_from": str(candidate),
+              "promoted_to": str(current),
+              "before_profile": before_best.get("profile"),
+              "after_profile": after_best.get("profile"),
+              "before_final_test_acc": before_best.get("final_test_acc"),
+              "after_final_test_acc": after_best.get("final_test_acc"),
+              "changed": before_best.get("profile") != after_best.get("profile"),
+          }
+          audit.parent.mkdir(parents=True, exist_ok=True)
+          audit.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          with audit_history.open("a", encoding="utf-8") as f:
+              f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+          print(
+              json.dumps(
+                  {
+                      "status": "ok",
+                      "promoted_from": str(candidate),
+                      "promoted_to": str(current),
+                      "audit": str(audit),
+                      "audit_history": str(audit_history),
+                  },
+                  indent=2,
+              )
+          )
+          PY
+
+      - name: Trim promotion history (optional)
+        if: ${{ inputs.promotion_history_keep_last != '' }}
+        run: |
+          python3 tent_io/harness/trim_llt_expansion_promotion_history.py \
+            --path "tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson" \
+            --keep-last "${{ inputs.promotion_history_keep_last }}"
+
+      - name: Build promotion leaderboard summary
+        run: |
+          CMD=(python3 tent_io/harness/summarize_llt_expansion_promotions.py --sort-by "${{ inputs.promotion_summary_sort_by }}")
+          if [[ "${{ inputs.promotion_summary_history_window }}" != "" ]]; then
+            CMD+=(--history-window "${{ inputs.promotion_summary_history_window }}")
+          fi
+          "${CMD[@]}"
+
+      - name: Write expansion sweep step summary
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+          before_path = Path("tent_io/harness/reports/expansion/llt_expansion_baseline_before_expansion.current.json")
+          if not summary_path.exists():
+              raise SystemExit(f"Missing sweep summary: {summary_path}")
+          payload = json.loads(summary_path.read_text(encoding="utf-8"))
+
+          best = payload.get("best_profile") if isinstance(payload.get("best_profile"), dict) else {}
+          trend = payload.get("trend") if isinstance(payload.get("trend"), dict) else {}
+          floor = float("${{ inputs.min_best_final_test_acc }}")
+          delta_input = "${{ inputs.min_delta_vs_previous_best }}"
+
+          best_acc = best.get("final_test_acc")
+          floor_passes = isinstance(best_acc, (int, float)) and float(best_acc) >= floor
+
+          before_best_acc = None
+          delta_vs_previous = None
+          delta_guard_passes = None
+          if before_path.exists():
+              try:
+                  before_payload = json.loads(before_path.read_text(encoding="utf-8"))
+                  before_best = before_payload.get("best_profile") if isinstance(before_payload.get("best_profile"), dict) else {}
+                  raw_before_acc = before_best.get("final_test_acc")
+                  if isinstance(raw_before_acc, (int, float)):
+                      before_best_acc = float(raw_before_acc)
+              except Exception:
+                  before_best_acc = None
+          if isinstance(best_acc, (int, float)) and isinstance(before_best_acc, float):
+              delta_vs_previous = float(best_acc) - before_best_acc
+          if delta_input != "":
+              min_delta = float(delta_input)
+              if isinstance(delta_vs_previous, float):
+                  delta_guard_passes = delta_vs_previous >= min_delta
+          floor_status = "PASS" if floor_passes else "FAIL"
+          if delta_input == "":
+              delta_status = "SKIP"
+          elif isinstance(delta_guard_passes, bool):
+              delta_status = "PASS" if delta_guard_passes else "FAIL"
+          else:
+              delta_status = "SKIP"
+          floor_badge = f"[{floor_status}]"
+          delta_badge = f"[{delta_status}]"
+
+          lines = [
+              "## LLT Expansion Sweep",
+              "",
+              f"- Status: **{payload.get('status')}**",
+              f"- Profiles: `{','.join(payload.get('profiles', [])) if isinstance(payload.get('profiles'), list) else payload.get('profiles')}`",
+              f"- Best profile: `{best.get('profile')}`",
+              f"- rank_by: `{payload.get('rank_by')}`",
+              f"- Best rank_metric_value: `{best.get('rank_metric_value')}`",
+              f"- Best final_test_acc: `{best.get('final_test_acc')}`",
+              f"- Best replay_test_acc: `{best.get('replay_test_acc')}`",
+              f"- Best train_eval_drift: `{best.get('train_eval_drift')}`",
+              f"- Trend sparkline: `{trend.get('sparkline_ascii')}`",
+              f"- Trend window: `{trend.get('window')}`",
+              f"- Trend points: `{trend.get('points')}`",
+              f"- split_gate_profile: `{os.environ.get('RESOLVED_SPLIT_GATE_PROFILE')}`",
+              (
+                  "- split_gate_thresholds: "
+                  f"`train_mmlu={os.environ.get('RESOLVED_LLT_MIN_MMLU_TEST_ACC')}, "
+                  f"train_conv={os.environ.get('RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC')}, "
+                  f"eval_mmlu={os.environ.get('RESOLVED_LLT_MIN_EVAL_MMLU_ACC')}, "
+                  f"eval_conv={os.environ.get('RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC')}`"
+              ),
+              "",
+              f"- Profiles resolved artifact: `tent_io/harness/reports/expansion/llt_expansion_profiles_resolved.expansion_sweep.current.json`",
+              "",
+              "### Guard Status",
+              f"- min_best_final_test_acc: `{floor}`",
+              f"- floor_passes: `{floor_passes}`",
+              f"- floor_status: **{floor_status}** {floor_badge}",
+              f"- min_delta_vs_previous_best: `{delta_input if delta_input != '' else 'disabled'}`",
+              f"- previous_best_final_test_acc: `{before_best_acc}`",
+              f"- delta_vs_previous_best: `{delta_vs_previous}`",
+              f"- delta_guard_passes: `{delta_guard_passes}`",
+              f"- delta_guard_status: **{delta_status}** {delta_badge}",
+              "",
+              f"Artifacts: `{summary_path}`, `tent_io/harness/reports/expansion/llt_expansion_sweep.current.md`",
+          ]
+
+          gh_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if gh_summary:
+              with open(gh_summary, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Write promotion leaderboard summary snippet
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.json")
+          if not summary_path.exists():
+              raise SystemExit(f"Missing promotion summary: {summary_path}")
+          payload = json.loads(summary_path.read_text(encoding="utf-8"))
+          board = payload.get("leaderboard") if isinstance(payload.get("leaderboard"), list) else []
+          top = board[0] if board else {}
+          sort_by = payload.get("sort_by")
+          top_k_raw = "${{ inputs.promotion_summary_top_k }}"
+          try:
+              top_k = max(1, int(top_k_raw))
+          except Exception:
+              top_k = 3
+          top_rows = board[:top_k]
+          lines = [
+              "### Promotion Leaderboard",
+              "",
+              f"- Profiles tracked: `{payload.get('profiles')}`",
+              f"- History window: `{payload.get('history_window')}`",
+              f"- Total promotion events: `{payload.get('total_events')}`",
+              f"- Total events (all history): `{payload.get('total_events_all_history')}`",
+              f"- sort_by: `{sort_by}`",
+              f"- Summary top_k: `{top_k}`",
+              f"- Top profile: `{top.get('profile')}`",
+              f"- Top profile promotions: `{top.get('promotions')}`",
+              f"- Top profile avg_final_test_acc: `{top.get('avg_final_test_acc')}`",
+              "",
+              "| rank | profile | promotions | avg_final_test_acc |",
+              "|---:|---|---:|---:|",
+          ]
+          for row in top_rows:
+              lines.append(
+                  f"| {row.get('rank')} | {row.get('profile')} | {row.get('promotions')} | {row.get('avg_final_test_acc')} |"
+              )
+          if not top_rows:
+              lines.append("| - | - | 0 | - |")
+          lines.extend(
+              [
+              "Artifact: `tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.md`",
+              ]
+          )
+          gh_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if gh_summary:
+              with open(gh_summary, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Upload expansion artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llt-expansion-sweep
+          path: |
+            tent_io/harness/reports/expansion/llt_expansion_sweep.current.json
+            tent_io/harness/reports/expansion/llt_expansion_sweep.current.md
+            tent_io/harness/reports/expansion/llt_expansion_profiles_resolved.expansion_sweep.current.json
+            tent_io/harness/reports/expansion/llt_expansion_best.candidate.json
+            tent_io/harness/reports/expansion/llt_expansion_best.current.json
+            tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.expansion_sweep.current.json
+            tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson
+            tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.json
+            tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.md
+            tent_io/harness/reports/expansion/llt_expansion_history.ndjson
+            tent_io/harness/reports/expansion/full_stage_pipeline.*.json
+          if-no-files-found: error
+
+  auto-all-compare:
+    name: Run auto_all and compare baseline
+    if: ${{ inputs.run_auto_all_compare }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy
+
+      - name: Validate workflow numeric inputs (auto_all)
+        run: |
+          python3 - <<'PY'
+          import json
+
+          def parse_float(name: str, raw: str, allow_empty: bool = False) -> float | None:
+              if raw == "" and allow_empty:
+                  return None
+              try:
+                  return float(raw)
+              except Exception as exc:
+                  raise SystemExit(f"Invalid float for {name}: {raw!r}") from exc
+
+          def parse_int(name: str, raw: str, allow_empty: bool = False, min_value: int | None = None) -> int | None:
+              if raw == "" and allow_empty:
+                  return None
+              try:
+                  value = int(raw)
+              except Exception as exc:
+                  raise SystemExit(f"Invalid int for {name}: {raw!r}") from exc
+              if min_value is not None and value < min_value:
+                  raise SystemExit(f"Invalid {name}: {value} < {min_value}")
+              return value
+
+          floor = parse_float("min_best_final_test_acc", "${{ inputs.min_best_final_test_acc }}")
+          delta = parse_float("min_delta_vs_previous_best", "${{ inputs.min_delta_vs_previous_best }}", allow_empty=True)
+          keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
+          top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
+          window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
+          sort_by = "${{ inputs.promotion_summary_sort_by }}"
+          if sort_by not in {"promotions", "avg_final_test_acc", "last_promoted_utc"}:
+              raise SystemExit(f"Invalid promotion_summary_sort_by: {sort_by!r}")
+          split_gate_profile = "${{ inputs.split_gate_profile }}"
+          if split_gate_profile not in {"off", "strict_split_profile_v1", "strict_split_profile_v1_conservative"}:
+              raise SystemExit(f"Invalid split_gate_profile: {split_gate_profile!r}")
+          rank_by = "${{ inputs.expansion_rank_by }}"
+          if rank_by not in {"final_test_acc", "mmlu_test_acc", "conversational_logic_test_acc"}:
+              raise SystemExit(f"Invalid expansion_rank_by: {rank_by!r}")
+          query = "${{ inputs.query }}".strip()
+          if query == "":
+              raise SystemExit("Invalid query: empty input.")
+
+          print(
+              json.dumps(
+                  {
+                      "status": "ok",
+                      "min_best_final_test_acc": floor,
+                      "min_delta_vs_previous_best": delta,
+                      "promotion_history_keep_last": keep_last,
+                      "promotion_summary_top_k": top_k,
+                      "promotion_summary_history_window": window,
+                      "promotion_summary_sort_by": sort_by,
+                      "split_gate_profile": split_gate_profile,
+                      "expansion_rank_by": rank_by,
+                      "query": query,
+                  },
+                  indent=2,
+                  ensure_ascii=True,
+              )
+          )
+          PY
+
+      - name: Validate profile selection semantics (auto_all)
+        run: |
+          mkdir -p tent_io/harness/reports/expansion
+          python3 tent_io/harness/run_llt_expansion_sweep.py \
+            --profiles "auto_all" \
+            --rank-by "${{ inputs.expansion_rank_by }}" \
+            --validate-only \
+            > tent_io/harness/reports/expansion/llt_expansion_profiles_resolved.auto_all.current.json
+
+      - name: Resolve split-gate profile (auto_all)
+        run: |
+          profile="${{ inputs.split_gate_profile }}"
+          case "$profile" in
+            off)
+              echo "RESOLVED_LLT_MIN_MMLU_TEST_ACC=-1" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC=-1" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_MMLU_ACC=-1" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC=-1" >> "$GITHUB_ENV"
+              ;;
+            strict_split_profile_v1)
+              echo "RESOLVED_LLT_MIN_MMLU_TEST_ACC=0.215" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC=0.1384375" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_MMLU_ACC=0.215" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC=0.1384375" >> "$GITHUB_ENV"
+              ;;
+            strict_split_profile_v1_conservative)
+              echo "RESOLVED_LLT_MIN_MMLU_TEST_ACC=0.205" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC=0.130" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_MMLU_ACC=0.205" >> "$GITHUB_ENV"
+              echo "RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC=0.130" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "Unknown split_gate_profile: $profile" >&2
+              exit 2
+              ;;
+          esac
+          echo "RESOLVED_SPLIT_GATE_PROFILE=$profile" >> "$GITHUB_ENV"
+
+      - name: Snapshot baseline pointer before sweep
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          pointer = Path("tent_io/harness/reports/expansion/llt_expansion_best.current.json")
+          out = Path("tent_io/harness/reports/expansion/llt_expansion_baseline_before.current.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          if pointer.exists():
+              try:
+                  payload = json.loads(pointer.read_text(encoding="utf-8"))
+              except Exception:
+                  payload = {"status": "invalid_pointer_json"}
+          else:
+              payload = {"status": "missing_pointer"}
+          out.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Execute LLT expansion sweep (auto_all)
+        run: |
+          python3 tent_io/harness/run_llt_expansion_sweep.py \
+            --profiles "auto_all" \
+            --rank-by "${{ inputs.expansion_rank_by }}" \
+            --query "${{ inputs.query }}" \
+            --llt-min-mmlu-test-acc "${RESOLVED_LLT_MIN_MMLU_TEST_ACC}" \
+            --llt-min-conversational-test-acc "${RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC}" \
+            --llt-min-eval-mmlu-acc "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
+            --llt-min-eval-conversational-acc "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}" \
+            --best-pointer-out "tent_io/harness/reports/expansion/llt_expansion_best.candidate.json"
+
+      - name: Enforce best-profile accuracy floor (auto_all)
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          floor = float("${{ inputs.min_best_final_test_acc }}")
+          summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+          if not summary_path.exists():
+              raise SystemExit(f"Missing sweep summary: {summary_path}")
+          payload = json.loads(summary_path.read_text(encoding="utf-8"))
+          best = payload.get("best_profile") if isinstance(payload.get("best_profile"), dict) else {}
+          best_acc = best.get("final_test_acc")
+          if not isinstance(best_acc, (int, float)):
+              raise SystemExit(f"Missing numeric best_profile.final_test_acc in {summary_path}")
+          best_acc = float(best_acc)
+          if best_acc < floor:
+              raise SystemExit(
+                  f"best_profile.final_test_acc below floor: {best_acc} < {floor} "
+                  f"(profile={best.get('profile')})"
+              )
+          print(json.dumps({"status": "ok", "floor": floor, "best_final_test_acc": best_acc}, indent=2))
+          PY
+
+      - name: Enforce optional delta-vs-previous guard (auto_all)
+        if: ${{ inputs.min_delta_vs_previous_best != '' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          min_delta = float("${{ inputs.min_delta_vs_previous_best }}")
+          before_path = Path("tent_io/harness/reports/expansion/llt_expansion_baseline_before.current.json")
+          summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+
+          def load_json(path: Path) -> dict:
+              if not path.exists():
+                  return {}
+              try:
+                  payload = json.loads(path.read_text(encoding="utf-8"))
+                  return payload if isinstance(payload, dict) else {}
+              except Exception:
+                  return {}
+
+          before = load_json(before_path)
+          before_best = before.get("best_profile") if isinstance(before.get("best_profile"), dict) else {}
+          summary = load_json(summary_path)
+          after_best = summary.get("best_profile") if isinstance(summary.get("best_profile"), dict) else {}
+          before_acc = before_best.get("final_test_acc")
+          after_acc = after_best.get("final_test_acc")
+
+          if not isinstance(before_acc, (int, float)):
+              print(json.dumps({"status": "skipped", "reason": "previous_best_missing"}, indent=2))
+              raise SystemExit(0)
+          if not isinstance(after_acc, (int, float)):
+              raise SystemExit("Current best final_test_acc is missing/non-numeric.")
+
+          delta = float(after_acc) - float(before_acc)
+          if delta < min_delta:
+              raise SystemExit(
+                  f"Delta guard failed: {delta} < {min_delta} "
+                  f"(before={before_acc}, after={after_acc}, profile={after_best.get('profile')})"
+              )
+          print(json.dumps({"status": "ok", "min_delta": min_delta, "delta": delta, "before": before_acc, "after": after_acc}, indent=2))
+          PY
+
+      - name: Baseline drift alarm (auto_all)
+        run: |
+          python3 tent_io/harness/check_llt_baseline_alarm.py \
+            --summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --expected-profile "expand_s2" \
+            --max-train-eval-drift 0.0 \
+            --require-train-gate-pass \
+            --require-replay-gate-pass \
+            --require-drift-gate-pass \
+            --min-train-mmlu "${RESOLVED_LLT_MIN_MMLU_TEST_ACC}" \
+            --min-train-conversational "${RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC}" \
+            --min-eval-mmlu "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
+            --min-eval-conversational "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}"
+
+      - name: Promote candidate pointer to current (auto_all)
+        run: |
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          candidate = Path("tent_io/harness/reports/expansion/llt_expansion_best.candidate.json")
+          current = Path("tent_io/harness/reports/expansion/llt_expansion_best.current.json")
+          audit = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.auto_all.current.json")
+          audit_history = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson")
+
+          def load_json(path: Path) -> dict:
+              if not path.exists():
+                  return {}
+              try:
+                  payload = json.loads(path.read_text(encoding="utf-8"))
+                  return payload if isinstance(payload, dict) else {}
+              except Exception:
+                  return {}
+
+          if not candidate.exists():
+              raise SystemExit(f"Missing candidate pointer: {candidate}")
+          before = load_json(current)
+          after = load_json(candidate)
+          current.parent.mkdir(parents=True, exist_ok=True)
+          current.write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
+          before_best = before.get("best_profile") if isinstance(before.get("best_profile"), dict) else {}
+          after_best = after.get("best_profile") if isinstance(after.get("best_profile"), dict) else {}
+          payload = {
+              "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+              "status": "ok",
+              "job": "auto-all-compare",
+              "promoted_from": str(candidate),
+              "promoted_to": str(current),
+              "before_profile": before_best.get("profile"),
+              "after_profile": after_best.get("profile"),
+              "before_final_test_acc": before_best.get("final_test_acc"),
+              "after_final_test_acc": after_best.get("final_test_acc"),
+              "changed": before_best.get("profile") != after_best.get("profile"),
+          }
+          audit.parent.mkdir(parents=True, exist_ok=True)
+          audit.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          with audit_history.open("a", encoding="utf-8") as f:
+              f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+          print(
+              json.dumps(
+                  {
+                      "status": "ok",
+                      "promoted_from": str(candidate),
+                      "promoted_to": str(current),
+                      "audit": str(audit),
+                      "audit_history": str(audit_history),
+                  },
+                  indent=2,
+              )
+          )
+          PY
+
+      - name: Trim promotion history (optional, auto_all)
+        if: ${{ inputs.promotion_history_keep_last != '' }}
+        run: |
+          python3 tent_io/harness/trim_llt_expansion_promotion_history.py \
+            --path "tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson" \
+            --keep-last "${{ inputs.promotion_history_keep_last }}"
+
+      - name: Build promotion leaderboard summary (auto_all)
+        run: |
+          CMD=(python3 tent_io/harness/summarize_llt_expansion_promotions.py --sort-by "${{ inputs.promotion_summary_sort_by }}")
+          if [[ "${{ inputs.promotion_summary_history_window }}" != "" ]]; then
+            CMD+=(--history-window "${{ inputs.promotion_summary_history_window }}")
+          fi
+          "${CMD[@]}"
+
+      - name: Compare baseline pointer change
+        run: |
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          before_path = Path("tent_io/harness/reports/expansion/llt_expansion_baseline_before.current.json")
+          after_path = Path("tent_io/harness/reports/expansion/llt_expansion_best.candidate.json")
+          out_path = Path("tent_io/harness/reports/expansion/llt_expansion_baseline_change.current.json")
+
+          def load_json(path: Path) -> dict:
+              if not path.exists():
+                  return {}
+              try:
+                  data = json.loads(path.read_text(encoding="utf-8"))
+                  return data if isinstance(data, dict) else {}
+              except Exception:
+                  return {}
+
+          before = load_json(before_path)
+          after = load_json(after_path)
+          before_best = before.get("best_profile") if isinstance(before.get("best_profile"), dict) else {}
+          after_best = after.get("best_profile") if isinstance(after.get("best_profile"), dict) else {}
+
+          before_profile = before_best.get("profile")
+          after_profile = after_best.get("profile")
+          before_acc = before_best.get("final_test_acc")
+          after_acc = after_best.get("final_test_acc")
+
+          changed = before_profile != after_profile
+          delta_acc = None
+          if isinstance(before_acc, (int, float)) and isinstance(after_acc, (int, float)):
+              delta_acc = float(after_acc) - float(before_acc)
+
+          payload = {
+              "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+              "before_profile": before_profile,
+              "after_profile": after_profile,
+              "changed": changed,
+              "before_final_test_acc": before_acc,
+              "after_final_test_acc": after_acc,
+              "delta_final_test_acc": delta_acc,
+              "before_pointer_path": str(before_path),
+              "after_pointer_path": str(after_path),
+              "status": "ok",
+          }
+          out_path.parent.mkdir(parents=True, exist_ok=True)
+          out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          print(json.dumps({"out": str(out_path), "changed": changed}, indent=2, ensure_ascii=True))
+          PY
+
+      - name: Write baseline compare step summary
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          change_path = Path("tent_io/harness/reports/expansion/llt_expansion_baseline_change.current.json")
+          if not change_path.exists():
+              raise SystemExit(f"Missing baseline change report: {change_path}")
+          payload = json.loads(change_path.read_text(encoding="utf-8"))
+
+          changed = payload.get("changed")
+          before_profile = payload.get("before_profile")
+          after_profile = payload.get("after_profile")
+          before_acc = payload.get("before_final_test_acc")
+          after_acc = payload.get("after_final_test_acc")
+          delta_acc = payload.get("delta_final_test_acc")
+          delta_input = "${{ inputs.min_delta_vs_previous_best }}"
+
+          status = "Changed" if changed else "No change"
+          if delta_input == "":
+              delta_status = "SKIP"
+          elif isinstance(delta_acc, (int, float)) and float(delta_acc) >= float(delta_input):
+              delta_status = "PASS"
+          elif isinstance(delta_acc, (int, float)):
+              delta_status = "FAIL"
+          else:
+              delta_status = "SKIP"
+          delta_badge = f"[{delta_status}]"
+          lines = [
+              "## LLT Expansion Baseline Compare",
+              "",
+              f"- Status: **{status}**",
+              f"- Before profile: `{before_profile}`",
+              f"- After profile: `{after_profile}`",
+              f"- Before final_test_acc: `{before_acc}`",
+              f"- After final_test_acc: `{after_acc}`",
+              f"- Delta final_test_acc: `{delta_acc}`",
+              f"- min_delta_vs_previous_best: `{delta_input if delta_input != '' else 'disabled'}`",
+              f"- delta_guard_status: **{delta_status}** {delta_badge}",
+              "",
+              f"Artifact: `{change_path}`",
+          ]
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Write auto_all trend addendum
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+          if not summary_path.exists():
+              raise SystemExit(f"Missing sweep summary: {summary_path}")
+          payload = json.loads(summary_path.read_text(encoding="utf-8"))
+          trend = payload.get("trend") if isinstance(payload.get("trend"), dict) else {}
+          best = payload.get("best_profile") if isinstance(payload.get("best_profile"), dict) else {}
+
+          lines = [
+              "### auto_all Trend",
+              "",
+              f"- Best profile: `{best.get('profile')}`",
+              f"- rank_by: `{payload.get('rank_by')}`",
+              f"- Best rank_metric_value: `{best.get('rank_metric_value')}`",
+              f"- Best final_test_acc: `{best.get('final_test_acc')}`",
+              f"- Trend sparkline: `{trend.get('sparkline_ascii')}`",
+              f"- Trend window: `{trend.get('window')}`",
+              f"- Trend points: `{trend.get('points')}`",
+              f"- split_gate_profile: `{os.environ.get('RESOLVED_SPLIT_GATE_PROFILE')}`",
+              (
+                  "- split_gate_thresholds: "
+                  f"`train_mmlu={os.environ.get('RESOLVED_LLT_MIN_MMLU_TEST_ACC')}, "
+                  f"train_conv={os.environ.get('RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC')}, "
+                  f"eval_mmlu={os.environ.get('RESOLVED_LLT_MIN_EVAL_MMLU_ACC')}, "
+                  f"eval_conv={os.environ.get('RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC')}`"
+              ),
+              "",
+              f"- Profiles resolved artifact: `tent_io/harness/reports/expansion/llt_expansion_profiles_resolved.auto_all.current.json`",
+          ]
+
+          gh_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if gh_summary:
+              with open(gh_summary, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Write promotion leaderboard summary snippet (auto_all)
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.json")
+          if not summary_path.exists():
+              raise SystemExit(f"Missing promotion summary: {summary_path}")
+          payload = json.loads(summary_path.read_text(encoding="utf-8"))
+          board = payload.get("leaderboard") if isinstance(payload.get("leaderboard"), list) else []
+          top = board[0] if board else {}
+          sort_by = payload.get("sort_by")
+          top_k_raw = "${{ inputs.promotion_summary_top_k }}"
+          try:
+              top_k = max(1, int(top_k_raw))
+          except Exception:
+              top_k = 3
+          top_rows = board[:top_k]
+          lines = [
+              "### Promotion Leaderboard (auto_all)",
+              "",
+              f"- Profiles tracked: `{payload.get('profiles')}`",
+              f"- History window: `{payload.get('history_window')}`",
+              f"- Total promotion events: `{payload.get('total_events')}`",
+              f"- Total events (all history): `{payload.get('total_events_all_history')}`",
+              f"- sort_by: `{sort_by}`",
+              f"- Summary top_k: `{top_k}`",
+              f"- Top profile: `{top.get('profile')}`",
+              f"- Top profile promotions: `{top.get('promotions')}`",
+              f"- Top profile avg_final_test_acc: `{top.get('avg_final_test_acc')}`",
+              "",
+              "| rank | profile | promotions | avg_final_test_acc |",
+              "|---:|---|---:|---:|",
+          ]
+          for row in top_rows:
+              lines.append(
+                  f"| {row.get('rank')} | {row.get('profile')} | {row.get('promotions')} | {row.get('avg_final_test_acc')} |"
+              )
+          if not top_rows:
+              lines.append("| - | - | 0 | - |")
+          gh_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if gh_summary:
+              with open(gh_summary, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Upload auto_all comparison artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llt-expansion-auto-all-compare
+          path: |
+            tent_io/harness/reports/expansion/llt_expansion_sweep.current.json
+            tent_io/harness/reports/expansion/llt_expansion_sweep.current.md
+            tent_io/harness/reports/expansion/llt_expansion_profiles_resolved.auto_all.current.json
+            tent_io/harness/reports/expansion/llt_expansion_best.candidate.json
+            tent_io/harness/reports/expansion/llt_expansion_best.current.json
+            tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.auto_all.current.json
+            tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson
+            tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.json
+            tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.md
+            tent_io/harness/reports/expansion/llt_expansion_history.ndjson
+            tent_io/harness/reports/expansion/llt_expansion_baseline_before.current.json
+            tent_io/harness/reports/expansion/llt_expansion_baseline_change.current.json
+            tent_io/harness/reports/expansion/full_stage_pipeline.*.json
+          if-no-files-found: error
