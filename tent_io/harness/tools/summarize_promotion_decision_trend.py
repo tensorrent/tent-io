@@ -1,109 +1,102 @@
 #!/usr/bin/env python3
-"""Summarize promotion decision-state history for quick regime tracking."""
-
-from __future__ import annotations
-
 import argparse
 import json
-from pathlib import Path
-from typing import Any
+import os
+import sys
 
+def main():
+    parser = argparse.ArgumentParser(description="Summarize promotion decision trend.")
+    parser.add_argument("--history", required=True, help="Path to promotion_decision.history.ndjson")
+    parser.add_argument("--out-json", required=True, help="Output trend JSON path")
+    parser.add_argument("--out-md", required=True, help="Output trend Markdown report path")
+    parser.add_argument("--window", type=int, default=10, help="Window for recent trend analysis")
 
-def parse_history(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    out: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(row, dict):
-            out.append(row)
-    return out
-
-
-def normalize_state(row: dict[str, Any]) -> str:
-    state = row.get("decision_state")
-    if isinstance(state, str) and state:
-        return state
-    if row.get("contested") is True:
-        return "contested"
-    if row.get("aligned") is True:
-        return "aligned_unknown"
-    return "insufficient_signal"
-
-
-def count_states(rows: list[dict[str, Any]]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for row in rows:
-        state = normalize_state(row)
-        counts[state] = counts.get(state, 0) + 1
-    return counts
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Summarize promotion decision-state trend history")
-    parser.add_argument("--history", type=Path, required=True, help="promotion_decision.history.ndjson")
-    parser.add_argument("--out-json", type=Path, required=True, help="trend summary JSON")
-    parser.add_argument("--out-md", type=Path, required=True, help="trend summary markdown")
-    parser.add_argument("--window", type=int, default=20, help="Recent-row window for short trend")
     args = parser.parse_args()
 
-    if args.window < 1:
-        raise SystemExit("--window must be >= 1")
+    if not os.path.exists(args.history):
+        print(f"History file not found: {args.history}")
+        sys.exit(0)
 
-    rows = parse_history(args.history)
-    recent = rows[-args.window :]
+    rows = []
+    try:
+        with open(args.history, 'r') as f:
+            for line in f:
+                if line.strip():
+                    rows.append(json.loads(line))
+    except Exception as e:
+        print(f"Error reading history: {str(e)}")
+        sys.exit(1)
+
+    if not rows:
+        print("No history rows found.")
+        sys.exit(0)
+
+    total_points = len(rows)
+    recent_rows = rows[-args.window:]
+    window_points = len(recent_rows)
+
+    def count_states(data):
+        counts = {}
+        for row in data:
+            s = row.get("decision_state", "unknown")
+            counts[s] = counts.get(s, 0) + 1
+        return counts
+
     counts_all = count_states(rows)
-    counts_recent = count_states(recent)
-    latest_state = normalize_state(rows[-1]) if rows else "insufficient_signal"
+    counts_recent = count_states(recent_rows)
 
-    contested_ratio_recent = 0.0
-    if recent:
-        contested_ratio_recent = counts_recent.get("contested", 0) / float(len(recent))
+    contested_recent = counts_recent.get("contested", 0)
+    contested_ratio = contested_recent / window_points if window_points > 0 else 0
+    
+    aligned_ready_recent = counts_recent.get("aligned_ready_for_promotion", 0)
+    ready_ratio = aligned_ready_recent / window_points if window_points > 0 else 0
 
-    regime_label = "balanced"
-    if contested_ratio_recent >= 0.6:
-        regime_label = "contested_dominant"
-    elif contested_ratio_recent <= 0.2 and latest_state.startswith("aligned"):
-        regime_label = "aligned_dominant"
+    regime = "balanced"
+    if contested_ratio > 0.5:
+        regime = "contested_dominant"
+    elif ready_ratio > 0.6:
+        regime = "aligned_dominant"
 
-    out = {
+    output_json = {
         "status": "ok",
-        "history_path": str(args.history),
-        "total_points": len(rows),
+        "history_path": args.history,
+        "total_points": total_points,
         "window": args.window,
-        "window_points": len(recent),
-        "latest_state": latest_state,
+        "window_points": window_points,
+        "latest_state": rows[-1].get("decision_state"),
         "counts_all": counts_all,
         "counts_recent": counts_recent,
-        "contested_ratio_recent": contested_ratio_recent,
-        "regime_label": regime_label,
+        "contested_ratio_recent": contested_ratio,
+        "regime_label": regime
     }
-    args.out_json.parent.mkdir(parents=True, exist_ok=True)
-    args.out_json.write_text(json.dumps(out, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
-    lines = [
-        "# Promotion Decision Trend",
-        "",
-        f"- total_points: `{out['total_points']}`",
-        f"- window: `{out['window']}`",
-        f"- window_points: `{out['window_points']}`",
-        f"- latest_state: `{out['latest_state']}`",
-        f"- contested_ratio_recent: `{out['contested_ratio_recent']}`",
-        f"- regime_label: `{out['regime_label']}`",
-        f"- counts_recent: `{out['counts_recent']}`",
-        f"- counts_all: `{out['counts_all']}`",
-    ]
-    args.out_md.parent.mkdir(parents=True, exist_ok=True)
-    args.out_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(json.dumps({"status": "ok", "out_json": str(args.out_json), "out_md": str(args.out_md)}, indent=2, ensure_ascii=True))
-    return 0
+    try:
+        with open(args.out_json, 'w') as f:
+            json.dump(output_json, f, indent=2)
+    except Exception as e:
+        print(f"Error writing JSON: {str(e)}")
 
+    # Write Markdown
+    md = f"# Promotion Decision Trend Report\n\n"
+    md += f"**Latest State:** `{output_json['latest_state']}`\n"
+    md += f"**Regime:** `{regime}`\n\n"
+    md += f"## Recent Window (last {window_points} points)\n"
+    for state, count in counts_recent.items():
+        pct = (count / window_points) * 100
+        md += f"- {state}: {count} ({pct:.1f}%)\n"
+    
+    md += f"\n## All-Time Statistics ({total_points} total points)\n"
+    for state, count in counts_all.items():
+        md += f"- {state}: {count}\n"
+
+    try:
+        with open(args.out_md, 'w') as f:
+            f.write(md)
+    except Exception as e:
+        print(f"Error writing Markdown: {str(e)}")
+
+    print(json.dumps(output_json))
+    sys.exit(0)
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

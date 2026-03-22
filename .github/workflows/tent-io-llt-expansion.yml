@@ -73,6 +73,16 @@ on:
         required: false
         default: false
         type: boolean
+      enforce_intelligence_promotion_advisory:
+        description: "When true, skip pointer promotion unless intelligence advisory state is promote_candidate."
+        required: false
+        default: false
+        type: boolean
+      intelligence_advisory_required_streak:
+        description: "Required consecutive promote_candidate advisories before advisory_state is promote_candidate."
+        required: false
+        default: "1"
+        type: string
       regression_min_delta_final_test_acc:
         description: "Fail when best final_test_acc delta vs previous is below this value."
         required: false
@@ -107,6 +117,91 @@ on:
         description: "Minimum external winner vote margin for promotion readiness."
         required: false
         default: "0"
+        type: string
+      enforce_intelligence_readiness:
+        description: "When true, fail run if intelligence readiness checks fail."
+        required: false
+        default: false
+        type: boolean
+      intelligence_min_ml_score:
+        description: "Optional minimum ML intelligence score; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_min_logic_chain_score:
+        description: "Optional minimum logic-chain score; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_min_ai_score:
+        description: "Optional minimum AI intelligence score; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_min_agi_readiness_score:
+        description: "Optional minimum AGI readiness score; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_max_contested_ratio:
+        description: "Optional maximum contested ratio over trend window; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_allowed_decision_states:
+        description: "Optional comma list of allowed decision states; empty disables."
+        required: false
+        default: ""
+        type: string
+      enforce_intelligence_regression:
+        description: "When true, fail run if intelligence score deltas regress beyond configured thresholds."
+        required: false
+        default: false
+        type: boolean
+      intelligence_min_delta_ml_score:
+        description: "Optional minimum delta for ML intelligence score vs previous run; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_min_delta_logic_chain_score:
+        description: "Optional minimum delta for logic-chain score vs previous run; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_min_delta_ai_score:
+        description: "Optional minimum delta for AI intelligence score vs previous run; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_min_delta_agi_readiness_score:
+        description: "Optional minimum delta for AGI readiness score vs previous run; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_max_delta_contested_ratio:
+        description: "Optional max increase for contested ratio vs previous run; empty disables."
+        required: false
+        default: ""
+        type: string
+      enforce_intelligence_regression_trend:
+        description: "When true, fail run if intelligence regression trend exceeds configured limits."
+        required: false
+        default: false
+        type: boolean
+      intelligence_regression_trend_window:
+        description: "Trend window for intelligence regression history summary."
+        required: false
+        default: "10"
+        type: string
+      intelligence_regression_max_alarm_ratio:
+        description: "Optional max alarm ratio in trend window; empty disables."
+        required: false
+        default: ""
+        type: string
+      intelligence_regression_max_consecutive_alarms:
+        description: "Optional max consecutive alarm runs; empty disables."
+        required: false
+        default: ""
         type: string
   schedule:
     - cron: "0 6 * * *"
@@ -180,6 +275,20 @@ jobs:
           align_runs = parse_int("promotion_alignment_required_runs", "${{ inputs.promotion_alignment_required_runs }}", min_value=1)
           promotion_internal_margin = parse_float("promotion_min_internal_margin", "${{ inputs.promotion_min_internal_margin }}")
           promotion_external_vote_margin = parse_int("promotion_min_external_vote_margin", "${{ inputs.promotion_min_external_vote_margin }}", min_value=0)
+          intel_ml = parse_float("intelligence_min_ml_score", "${{ inputs.intelligence_min_ml_score }}", allow_empty=True)
+          intel_logic = parse_float("intelligence_min_logic_chain_score", "${{ inputs.intelligence_min_logic_chain_score }}", allow_empty=True)
+          intel_ai = parse_float("intelligence_min_ai_score", "${{ inputs.intelligence_min_ai_score }}", allow_empty=True)
+          intel_agi = parse_float("intelligence_min_agi_readiness_score", "${{ inputs.intelligence_min_agi_readiness_score }}", allow_empty=True)
+          intel_contested = parse_float("intelligence_max_contested_ratio", "${{ inputs.intelligence_max_contested_ratio }}", allow_empty=True)
+          intel_d_ml = parse_float("intelligence_min_delta_ml_score", "${{ inputs.intelligence_min_delta_ml_score }}", allow_empty=True)
+          intel_d_logic = parse_float("intelligence_min_delta_logic_chain_score", "${{ inputs.intelligence_min_delta_logic_chain_score }}", allow_empty=True)
+          intel_d_ai = parse_float("intelligence_min_delta_ai_score", "${{ inputs.intelligence_min_delta_ai_score }}", allow_empty=True)
+          intel_d_agi = parse_float("intelligence_min_delta_agi_readiness_score", "${{ inputs.intelligence_min_delta_agi_readiness_score }}", allow_empty=True)
+          intel_d_contested = parse_float("intelligence_max_delta_contested_ratio", "${{ inputs.intelligence_max_delta_contested_ratio }}", allow_empty=True)
+          intel_t_window = parse_int("intelligence_regression_trend_window", "${{ inputs.intelligence_regression_trend_window }}", min_value=1)
+          intel_t_alarm_ratio = parse_float("intelligence_regression_max_alarm_ratio", "${{ inputs.intelligence_regression_max_alarm_ratio }}", allow_empty=True)
+          intel_t_consecutive = parse_int("intelligence_regression_max_consecutive_alarms", "${{ inputs.intelligence_regression_max_consecutive_alarms }}", allow_empty=True, min_value=0)
+          intel_adv_streak = parse_int("intelligence_advisory_required_streak", "${{ inputs.intelligence_advisory_required_streak }}", min_value=1)
           keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
           top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
           window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
@@ -212,6 +321,25 @@ jobs:
                       "promotion_alignment_required_runs": align_runs,
                       "promotion_min_internal_margin": promotion_internal_margin,
                       "promotion_min_external_vote_margin": promotion_external_vote_margin,
+                      "intelligence_min_ml_score": intel_ml,
+                      "intelligence_min_logic_chain_score": intel_logic,
+                      "intelligence_min_ai_score": intel_ai,
+                      "intelligence_min_agi_readiness_score": intel_agi,
+                      "intelligence_max_contested_ratio": intel_contested,
+                      "intelligence_min_delta_ml_score": intel_d_ml,
+                      "intelligence_min_delta_logic_chain_score": intel_d_logic,
+                      "intelligence_min_delta_ai_score": intel_d_ai,
+                      "intelligence_min_delta_agi_readiness_score": intel_d_agi,
+                      "intelligence_max_delta_contested_ratio": intel_d_contested,
+                      "intelligence_regression_trend_window": intel_t_window,
+                      "intelligence_regression_max_alarm_ratio": intel_t_alarm_ratio,
+                      "intelligence_regression_max_consecutive_alarms": intel_t_consecutive,
+                      "intelligence_advisory_required_streak": intel_adv_streak,
+                      "intelligence_allowed_decision_states": "${{ inputs.intelligence_allowed_decision_states }}",
+                      "enforce_intelligence_readiness": "${{ inputs.enforce_intelligence_readiness }}",
+                      "enforce_intelligence_regression": "${{ inputs.enforce_intelligence_regression }}",
+                      "enforce_intelligence_regression_trend": "${{ inputs.enforce_intelligence_regression_trend }}",
+                      "enforce_intelligence_promotion_advisory": "${{ inputs.enforce_intelligence_promotion_advisory }}",
                       "promotion_history_keep_last": keep_last,
                       "promotion_summary_top_k": top_k,
                       "promotion_summary_history_window": window,
@@ -566,6 +694,25 @@ jobs:
             --out-md "tent_io/harness/reports/expansion/promotion_decision_trend.current.md" \
             --window 20
 
+      - name: Snapshot previous intelligence scoring
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          current = Path("tent_io/harness/reports/expansion/intelligence_scoring.current.json")
+          previous = Path("tent_io/harness/reports/expansion/intelligence_scoring.previous.current.json")
+          previous.parent.mkdir(parents=True, exist_ok=True)
+          if current.exists():
+              previous.write_text(current.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              previous.write_text(
+                  json.dumps({"status": "missing_previous_intelligence_scoring"}, indent=2, ensure_ascii=True) + "\n",
+                  encoding="utf-8",
+              )
+          PY
+
       - name: Compute intelligence scoring (non-blocking)
         if: ${{ inputs.enable_external_eval }}
         run: |
@@ -576,6 +723,101 @@ jobs:
             --promotion-trend "tent_io/harness/reports/expansion/promotion_decision_trend.current.json" \
             --out-json "tent_io/harness/reports/expansion/intelligence_scoring.current.json" \
             --out-md "tent_io/harness/reports/expansion/intelligence_scoring.current.md"
+
+      - name: Check intelligence score regression
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          CMD=(
+            python3 tent_io/harness/tools/check_intelligence_regression.py
+            --current "tent_io/harness/reports/expansion/intelligence_scoring.current.json"
+            --previous "tent_io/harness/reports/expansion/intelligence_scoring.previous.current.json"
+            --out "tent_io/harness/reports/expansion/intelligence_regression.current.json"
+            --history-out "tent_io/harness/reports/expansion/intelligence_regression.history.ndjson"
+          )
+          if [[ "${{ inputs.intelligence_min_delta_ml_score }}" != "" ]]; then
+            CMD+=(--min-delta-ml-score "${{ inputs.intelligence_min_delta_ml_score }}")
+          fi
+          if [[ "${{ inputs.intelligence_min_delta_logic_chain_score }}" != "" ]]; then
+            CMD+=(--min-delta-logic-chain-score "${{ inputs.intelligence_min_delta_logic_chain_score }}")
+          fi
+          if [[ "${{ inputs.intelligence_min_delta_ai_score }}" != "" ]]; then
+            CMD+=(--min-delta-ai-score "${{ inputs.intelligence_min_delta_ai_score }}")
+          fi
+          if [[ "${{ inputs.intelligence_min_delta_agi_readiness_score }}" != "" ]]; then
+            CMD+=(--min-delta-agi-readiness-score "${{ inputs.intelligence_min_delta_agi_readiness_score }}")
+          fi
+          if [[ "${{ inputs.intelligence_max_delta_contested_ratio }}" != "" ]]; then
+            CMD+=(--max-delta-contested-ratio "${{ inputs.intelligence_max_delta_contested_ratio }}")
+          fi
+          if [[ "${{ inputs.enforce_intelligence_regression }}" == "true" ]]; then
+            CMD+=(--enforce)
+          fi
+          "${CMD[@]}"
+
+      - name: Summarize intelligence regression trend
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          CMD=(
+            python3 tent_io/harness/tools/summarize_intelligence_regression_trend.py
+            --history "tent_io/harness/reports/expansion/intelligence_regression.history.ndjson"
+            --out-json "tent_io/harness/reports/expansion/intelligence_regression_trend.current.json"
+            --out-md "tent_io/harness/reports/expansion/intelligence_regression_trend.current.md"
+            --window "${{ inputs.intelligence_regression_trend_window }}"
+          )
+          if [[ "${{ inputs.intelligence_regression_max_alarm_ratio }}" != "" ]]; then
+            CMD+=(--max-alarm-ratio "${{ inputs.intelligence_regression_max_alarm_ratio }}")
+          fi
+          if [[ "${{ inputs.intelligence_regression_max_consecutive_alarms }}" != "" ]]; then
+            CMD+=(--max-consecutive-alarms "${{ inputs.intelligence_regression_max_consecutive_alarms }}")
+          fi
+          if [[ "${{ inputs.enforce_intelligence_regression_trend }}" == "true" ]]; then
+            CMD+=(--enforce)
+          fi
+          "${CMD[@]}"
+
+      - name: Check intelligence readiness
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          CMD=(
+            python3 tent_io/harness/tools/check_intelligence_readiness.py
+            --score-json "tent_io/harness/reports/expansion/intelligence_scoring.current.json"
+            --out "tent_io/harness/reports/expansion/intelligence_readiness.current.json"
+          )
+          if [[ "${{ inputs.intelligence_min_ml_score }}" != "" ]]; then
+            CMD+=(--min-ml-score "${{ inputs.intelligence_min_ml_score }}")
+          fi
+          if [[ "${{ inputs.intelligence_min_logic_chain_score }}" != "" ]]; then
+            CMD+=(--min-logic-chain-score "${{ inputs.intelligence_min_logic_chain_score }}")
+          fi
+          if [[ "${{ inputs.intelligence_min_ai_score }}" != "" ]]; then
+            CMD+=(--min-ai-score "${{ inputs.intelligence_min_ai_score }}")
+          fi
+          if [[ "${{ inputs.intelligence_min_agi_readiness_score }}" != "" ]]; then
+            CMD+=(--min-agi-readiness-score "${{ inputs.intelligence_min_agi_readiness_score }}")
+          fi
+          if [[ "${{ inputs.intelligence_max_contested_ratio }}" != "" ]]; then
+            CMD+=(--max-contested-ratio "${{ inputs.intelligence_max_contested_ratio }}")
+          fi
+          if [[ "${{ inputs.intelligence_allowed_decision_states }}" != "" ]]; then
+            CMD+=(--allowed-decision-states "${{ inputs.intelligence_allowed_decision_states }}")
+          fi
+          if [[ "${{ inputs.enforce_intelligence_readiness }}" == "true" ]]; then
+            CMD+=(--enforce)
+          fi
+          "${CMD[@]}"
+
+      - name: Compute intelligence promotion advisory (non-blocking)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 tent_io/harness/tools/compute_intelligence_promotion_advisory.py \
+            --promotion-decision "tent_io/harness/reports/expansion/promotion_decision.current.json" \
+            --intelligence-readiness "tent_io/harness/reports/expansion/intelligence_readiness.current.json" \
+            --intelligence-regression "tent_io/harness/reports/expansion/intelligence_regression.current.json" \
+            --intelligence-regression-trend "tent_io/harness/reports/expansion/intelligence_regression_trend.current.json" \
+            --history-out "tent_io/harness/reports/expansion/intelligence_promotion_advisory.history.ndjson" \
+            --required-promote-candidate-streak "${{ inputs.intelligence_advisory_required_streak }}" \
+            --out-json "tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.json" \
+            --out-md "tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.md"
 
       - name: Write pre-alarm decision summary (always before hard gate)
         if: ${{ inputs.enable_external_eval }}
@@ -589,6 +831,10 @@ jobs:
           decision_path = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
           trend_path = Path("tent_io/harness/reports/expansion/promotion_decision_trend.current.json")
           scoring_path = Path("tent_io/harness/reports/expansion/intelligence_scoring.current.json")
+          regression_path = Path("tent_io/harness/reports/expansion/intelligence_regression.current.json")
+          regression_trend_path = Path("tent_io/harness/reports/expansion/intelligence_regression_trend.current.json")
+          readiness_path = Path("tent_io/harness/reports/expansion/intelligence_readiness.current.json")
+          advisory_path = Path("tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.json")
           lines = [
               "### Pre-Alarm Decision Snapshot",
               "",
@@ -607,14 +853,23 @@ jobs:
           if decision_path.exists():
               dec = json.loads(decision_path.read_text(encoding="utf-8"))
               enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
+              enforce_advisory = "${{ inputs.enforce_intelligence_promotion_advisory }}" == "true"
               promotion_action = "promote_if_hard_gates_pass"
               if enforce_policy and dec.get("promotion_allowed") is not True:
                   promotion_action = "blocked_by_policy"
+              elif enforce_advisory:
+                  advisory_state = None
+                  if advisory_path.exists():
+                      adv = json.loads(advisory_path.read_text(encoding="utf-8"))
+                      advisory_state = adv.get("advisory_state")
+                  if advisory_state != "promote_candidate":
+                      promotion_action = "blocked_by_intelligence_advisory"
               lines.extend(
                   [
                       f"- decision_state: `{dec.get('decision_state')}`",
                       f"- promotion_allowed: `{dec.get('promotion_allowed')}`",
                       f"- promotion_action: `{promotion_action}`",
+                      f"- enforce_intelligence_promotion_advisory: `{enforce_advisory}`",
                       f"- internal_winner: `{dec.get('internal_winner')}`",
                       f"- external_winner: `{dec.get('external_winner')}`",
                       f"- aligned_streak: `{dec.get('aligned_streak')}` / `{dec.get('alignment_required_runs')}`",
@@ -647,6 +902,49 @@ jobs:
               )
           else:
               lines.append("- intelligence_scoring: `missing`")
+          if regression_path.exists():
+              reg = json.loads(regression_path.read_text(encoding="utf-8"))
+              lines.extend(
+                  [
+                      f"- intelligence_regression_status: `{reg.get('status')}`",
+                      f"- intelligence_regression_failures: `{reg.get('failures')}`",
+                  ]
+              )
+          else:
+              lines.append("- intelligence_regression: `missing`")
+          if regression_trend_path.exists():
+              tr = json.loads(regression_trend_path.read_text(encoding="utf-8"))
+              lines.extend(
+                  [
+                      f"- intelligence_regression_trend_status: `{tr.get('status')}`",
+                      f"- intelligence_regression_regime_label: `{tr.get('regime_label')}`",
+                      f"- intelligence_regression_alarm_ratio_recent: `{tr.get('alarm_ratio_recent')}`",
+                      f"- intelligence_regression_consecutive_alarm_recent: `{tr.get('consecutive_alarm_recent')}`",
+                  ]
+              )
+          else:
+              lines.append("- intelligence_regression_trend: `missing`")
+          if readiness_path.exists():
+              ready = json.loads(readiness_path.read_text(encoding="utf-8"))
+              lines.extend(
+                  [
+                      f"- intelligence_readiness_status: `{ready.get('status')}`",
+                      f"- intelligence_readiness_failures: `{ready.get('failures')}`",
+                  ]
+              )
+          else:
+              lines.append("- intelligence_readiness: `missing`")
+          if advisory_path.exists():
+              adv = json.loads(advisory_path.read_text(encoding="utf-8"))
+              lines.extend(
+                  [
+                      f"- intelligence_advisory_state: `{adv.get('advisory_state')}`",
+                      f"- intelligence_advisory_streak: `{adv.get('promote_candidate_streak')}` / `{adv.get('required_promote_candidate_streak')}`",
+                      f"- intelligence_advisory_reasons: `{adv.get('reasons')}`",
+                  ]
+              )
+          else:
+              lines.append("- intelligence_promotion_advisory: `missing`")
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary_path:
               with open(summary_path, "a", encoding="utf-8") as f:
@@ -680,7 +978,9 @@ jobs:
           audit = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.expansion_sweep.current.json")
           audit_history = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson")
           decision = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          advisory = Path("tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.json")
           enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
+          enforce_advisory = "${{ inputs.enforce_intelligence_promotion_advisory }}" == "true"
           external_enabled = "${{ inputs.enable_external_eval }}" == "true"
 
           def load_json(path: Path) -> dict:
@@ -706,6 +1006,26 @@ jobs:
                       "decision_path": str(decision),
                       "decision_state": decision_payload.get("decision_state"),
                       "promotion_allowed": decision_payload.get("promotion_allowed"),
+                      "promoted_from": str(candidate),
+                      "promoted_to": str(current),
+                  }
+                  audit.parent.mkdir(parents=True, exist_ok=True)
+                  audit.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+                  with audit_history.open("a", encoding="utf-8") as f:
+                      f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+                  print(json.dumps(payload, indent=2, ensure_ascii=True))
+                  raise SystemExit(0)
+          if enforce_advisory and external_enabled:
+              advisory_payload = load_json(advisory)
+              advisory_state = advisory_payload.get("advisory_state")
+              if advisory_state != "promote_candidate":
+                  payload = {
+                      "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                      "status": "skipped",
+                      "reason": "intelligence_advisory_blocked",
+                      "job": "expansion-sweep",
+                      "advisory_path": str(advisory),
+                      "advisory_state": advisory_state,
                       "promoted_from": str(candidate),
                       "promoted_to": str(current),
                   }
@@ -856,6 +1176,7 @@ jobs:
               f"drift=${{ inputs.regression_max_delta_drift }}`",
               f"- allow_baseline_change: `${{ inputs.allow_baseline_change }}`",
               f"- enforce_promotion_decision_policy: `${{ inputs.enforce_promotion_decision_policy }}`",
+              f"- enforce_intelligence_promotion_advisory: `${{ inputs.enforce_intelligence_promotion_advisory }}`",
               "",
               f"Artifacts: `{summary_path}`, `tent_io/harness/reports/expansion/llt_expansion_sweep.current.md`",
           ]
@@ -1010,10 +1331,22 @@ jobs:
           from pathlib import Path
 
           score_path = Path("tent_io/harness/reports/expansion/intelligence_scoring.current.json")
+          regression_path = Path("tent_io/harness/reports/expansion/intelligence_regression.current.json")
+          regression_trend_path = Path("tent_io/harness/reports/expansion/intelligence_regression_trend.current.json")
+          readiness_path = Path("tent_io/harness/reports/expansion/intelligence_readiness.current.json")
           if not score_path.exists():
               raise SystemExit(f"Missing intelligence scoring artifact: {score_path}")
           payload = json.loads(score_path.read_text(encoding="utf-8"))
           scores = payload.get("scores") if isinstance(payload.get("scores"), dict) else {}
+          regression = {}
+          if regression_path.exists():
+              regression = json.loads(regression_path.read_text(encoding="utf-8"))
+          regression_trend = {}
+          if regression_trend_path.exists():
+              regression_trend = json.loads(regression_trend_path.read_text(encoding="utf-8"))
+          readiness = {}
+          if readiness_path.exists():
+              readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
           lines = [
               "### Intelligence Scoring",
               "",
@@ -1024,9 +1357,56 @@ jobs:
               f"- logic_chain_score: `{scores.get('logic_chain_score')}`",
               f"- ai_intelligence_score: `{scores.get('ai_intelligence_score')}`",
               f"- agi_readiness_score: `{scores.get('agi_readiness_score')}`",
+              f"- intelligence_regression_status: `{regression.get('status')}`",
+              f"- intelligence_regression_failures: `{regression.get('failures')}`",
+              f"- enforce_intelligence_regression: `${{ inputs.enforce_intelligence_regression }}`",
+              f"- intelligence_regression_trend_status: `{regression_trend.get('status')}`",
+              f"- intelligence_regression_regime_label: `{regression_trend.get('regime_label')}`",
+              f"- intelligence_regression_alarm_ratio_recent: `{regression_trend.get('alarm_ratio_recent')}`",
+              f"- intelligence_regression_consecutive_alarm_recent: `{regression_trend.get('consecutive_alarm_recent')}`",
+              f"- enforce_intelligence_regression_trend: `${{ inputs.enforce_intelligence_regression_trend }}`",
+              f"- intelligence_readiness_status: `{readiness.get('status')}`",
+              f"- intelligence_readiness_failures: `{readiness.get('failures')}`",
+              f"- enforce_intelligence_readiness: `${{ inputs.enforce_intelligence_readiness }}`",
               "",
               f"Artifact: `{score_path}`",
               "Trend: `tent_io/harness/reports/expansion/intelligence_scoring.current.md`",
+              f"Regression: `{regression_path}`",
+              f"Regression trend: `{regression_trend_path}`",
+              f"Readiness: `{readiness_path}`",
+          ]
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Write intelligence promotion advisory summary snippet
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          advisory_path = Path("tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.json")
+          if not advisory_path.exists():
+              raise SystemExit(f"Missing intelligence promotion advisory artifact: {advisory_path}")
+          payload = json.loads(advisory_path.read_text(encoding="utf-8"))
+          lines = [
+              "### Intelligence Promotion Advisory",
+              "",
+              f"- advisory_state: `{payload.get('advisory_state')}`",
+              f"- advisory_state_base: `{payload.get('advisory_state_base')}`",
+              f"- promote_candidate_streak: `{payload.get('promote_candidate_streak')}` / `{payload.get('required_promote_candidate_streak')}`",
+              f"- promotion_decision_state: `{payload.get('promotion_decision_state')}`",
+              f"- promotion_allowed: `{payload.get('promotion_allowed')}`",
+              f"- signal_status: `{payload.get('signal_status')}`",
+              f"- reasons: `{payload.get('reasons')}`",
+              "",
+              f"Artifact: `{advisory_path}`",
+              "Trend: `tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.md`",
           ]
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary_path:
@@ -1059,8 +1439,17 @@ jobs:
             tent_io/harness/reports/expansion/promotion_decision.history.ndjson
             tent_io/harness/reports/expansion/promotion_decision_trend.current.json
             tent_io/harness/reports/expansion/promotion_decision_trend.current.md
+            tent_io/harness/reports/expansion/intelligence_scoring.previous.current.json
             tent_io/harness/reports/expansion/intelligence_scoring.current.json
             tent_io/harness/reports/expansion/intelligence_scoring.current.md
+            tent_io/harness/reports/expansion/intelligence_regression.current.json
+            tent_io/harness/reports/expansion/intelligence_regression.history.ndjson
+            tent_io/harness/reports/expansion/intelligence_regression_trend.current.json
+            tent_io/harness/reports/expansion/intelligence_regression_trend.current.md
+            tent_io/harness/reports/expansion/intelligence_readiness.current.json
+            tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.json
+            tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.md
+            tent_io/harness/reports/expansion/intelligence_promotion_advisory.history.ndjson
             tent_io/harness/reports/expansion/full_stage_pipeline.*.json
           if-no-files-found: error
 
@@ -1125,6 +1514,20 @@ jobs:
           align_runs = parse_int("promotion_alignment_required_runs", "${{ inputs.promotion_alignment_required_runs }}", min_value=1)
           promotion_internal_margin = parse_float("promotion_min_internal_margin", "${{ inputs.promotion_min_internal_margin }}")
           promotion_external_vote_margin = parse_int("promotion_min_external_vote_margin", "${{ inputs.promotion_min_external_vote_margin }}", min_value=0)
+          intel_ml = parse_float("intelligence_min_ml_score", "${{ inputs.intelligence_min_ml_score }}", allow_empty=True)
+          intel_logic = parse_float("intelligence_min_logic_chain_score", "${{ inputs.intelligence_min_logic_chain_score }}", allow_empty=True)
+          intel_ai = parse_float("intelligence_min_ai_score", "${{ inputs.intelligence_min_ai_score }}", allow_empty=True)
+          intel_agi = parse_float("intelligence_min_agi_readiness_score", "${{ inputs.intelligence_min_agi_readiness_score }}", allow_empty=True)
+          intel_contested = parse_float("intelligence_max_contested_ratio", "${{ inputs.intelligence_max_contested_ratio }}", allow_empty=True)
+          intel_d_ml = parse_float("intelligence_min_delta_ml_score", "${{ inputs.intelligence_min_delta_ml_score }}", allow_empty=True)
+          intel_d_logic = parse_float("intelligence_min_delta_logic_chain_score", "${{ inputs.intelligence_min_delta_logic_chain_score }}", allow_empty=True)
+          intel_d_ai = parse_float("intelligence_min_delta_ai_score", "${{ inputs.intelligence_min_delta_ai_score }}", allow_empty=True)
+          intel_d_agi = parse_float("intelligence_min_delta_agi_readiness_score", "${{ inputs.intelligence_min_delta_agi_readiness_score }}", allow_empty=True)
+          intel_d_contested = parse_float("intelligence_max_delta_contested_ratio", "${{ inputs.intelligence_max_delta_contested_ratio }}", allow_empty=True)
+          intel_t_window = parse_int("intelligence_regression_trend_window", "${{ inputs.intelligence_regression_trend_window }}", min_value=1)
+          intel_t_alarm_ratio = parse_float("intelligence_regression_max_alarm_ratio", "${{ inputs.intelligence_regression_max_alarm_ratio }}", allow_empty=True)
+          intel_t_consecutive = parse_int("intelligence_regression_max_consecutive_alarms", "${{ inputs.intelligence_regression_max_consecutive_alarms }}", allow_empty=True, min_value=0)
+          intel_adv_streak = parse_int("intelligence_advisory_required_streak", "${{ inputs.intelligence_advisory_required_streak }}", min_value=1)
           keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
           top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
           window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
@@ -1154,6 +1557,25 @@ jobs:
                       "promotion_alignment_required_runs": align_runs,
                       "promotion_min_internal_margin": promotion_internal_margin,
                       "promotion_min_external_vote_margin": promotion_external_vote_margin,
+                      "intelligence_min_ml_score": intel_ml,
+                      "intelligence_min_logic_chain_score": intel_logic,
+                      "intelligence_min_ai_score": intel_ai,
+                      "intelligence_min_agi_readiness_score": intel_agi,
+                      "intelligence_max_contested_ratio": intel_contested,
+                      "intelligence_min_delta_ml_score": intel_d_ml,
+                      "intelligence_min_delta_logic_chain_score": intel_d_logic,
+                      "intelligence_min_delta_ai_score": intel_d_ai,
+                      "intelligence_min_delta_agi_readiness_score": intel_d_agi,
+                      "intelligence_max_delta_contested_ratio": intel_d_contested,
+                      "intelligence_regression_trend_window": intel_t_window,
+                      "intelligence_regression_max_alarm_ratio": intel_t_alarm_ratio,
+                      "intelligence_regression_max_consecutive_alarms": intel_t_consecutive,
+                      "intelligence_advisory_required_streak": intel_adv_streak,
+                      "intelligence_allowed_decision_states": "${{ inputs.intelligence_allowed_decision_states }}",
+                      "enforce_intelligence_readiness": "${{ inputs.enforce_intelligence_readiness }}",
+                      "enforce_intelligence_regression": "${{ inputs.enforce_intelligence_regression }}",
+                      "enforce_intelligence_regression_trend": "${{ inputs.enforce_intelligence_regression_trend }}",
+                      "enforce_intelligence_promotion_advisory": "${{ inputs.enforce_intelligence_promotion_advisory }}",
                       "promotion_history_keep_last": keep_last,
                       "promotion_summary_top_k": top_k,
                       "promotion_summary_history_window": window,
@@ -1380,7 +1802,9 @@ jobs:
           audit = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.auto_all.current.json")
           audit_history = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson")
           decision = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          advisory = Path("tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.json")
           enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
+          enforce_advisory = "${{ inputs.enforce_intelligence_promotion_advisory }}" == "true"
           external_enabled = "${{ inputs.enable_external_eval }}" == "true"
 
           def load_json(path: Path) -> dict:
@@ -1406,6 +1830,26 @@ jobs:
                       "decision_path": str(decision),
                       "decision_state": decision_payload.get("decision_state"),
                       "promotion_allowed": decision_payload.get("promotion_allowed"),
+                      "promoted_from": str(candidate),
+                      "promoted_to": str(current),
+                  }
+                  audit.parent.mkdir(parents=True, exist_ok=True)
+                  audit.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+                  with audit_history.open("a", encoding="utf-8") as f:
+                      f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+                  print(json.dumps(payload, indent=2, ensure_ascii=True))
+                  raise SystemExit(0)
+          if enforce_advisory and external_enabled:
+              advisory_payload = load_json(advisory)
+              advisory_state = advisory_payload.get("advisory_state")
+              if advisory_state != "promote_candidate":
+                  payload = {
+                      "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                      "status": "skipped",
+                      "reason": "intelligence_advisory_blocked",
+                      "job": "auto-all-compare",
+                      "advisory_path": str(advisory),
+                      "advisory_state": advisory_state,
                       "promoted_from": str(candidate),
                       "promoted_to": str(current),
                   }
