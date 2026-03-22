@@ -58,6 +58,11 @@ on:
         required: false
         default: "off"
         type: string
+      enable_external_eval:
+        description: "Run non-blocking external-eval comparison lane for expand_s1 vs expand_s2."
+        required: false
+        default: true
+        type: boolean
       allow_baseline_change:
         description: "Allow baseline profile change without failing baseline drift check."
         required: false
@@ -396,6 +401,85 @@ jobs:
             --min-eval-mmlu "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
             --min-eval-conversational "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}"
 
+      - name: Snapshot previous external compare (expansion-sweep)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          current = Path("tent_io/harness/reports/expansion/external_eval_compare.current.json")
+          previous = Path("tent_io/harness/reports/expansion/external_eval_compare.previous.json")
+          previous.parent.mkdir(parents=True, exist_ok=True)
+          if current.exists():
+              previous.write_text(current.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              previous.write_text(
+                  json.dumps({"status": "missing_previous_external_compare"}, indent=2, ensure_ascii=True) + "\n",
+                  encoding="utf-8",
+              )
+          PY
+
+      - name: Run external eval for expand_s1 and expand_s2 (expansion-sweep)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          base = Path("tent_io/harness/reports/expansion")
+          base.mkdir(parents=True, exist_ok=True)
+          runs = []
+          for profile in ("expand_s1", "expand_s2"):
+              matches = sorted(base.glob(f"full_stage_pipeline.{profile}.*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+              out = base / f"external_eval.{profile}.current.json"
+              if not matches:
+                  payload = {
+                      "status": "skipped",
+                      "reason": "missing_profile_pipeline_report",
+                      "profile": profile,
+                      "pipeline_report": None,
+                  }
+                  out.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+                  runs.append(payload)
+                  continue
+              report_path = matches[0]
+              cmd = [
+                  "python3",
+                  "tent_io/harness/run_external_eval.py",
+                  "--profile",
+                  profile,
+                  "--pipeline-report",
+                  str(report_path),
+                  "--out",
+                  str(out),
+              ]
+              proc = subprocess.run(cmd, capture_output=True, text=True)
+              runs.append(
+                  {
+                      "profile": profile,
+                      "pipeline_report": str(report_path),
+                      "out": str(out),
+                      "rc": proc.returncode,
+                      "stdout_tail": proc.stdout[-500:],
+                      "stderr_tail": proc.stderr[-500:],
+                  }
+              )
+              if proc.returncode != 0:
+                  raise SystemExit(f"External eval failed for {profile}: rc={proc.returncode}")
+          summary = base / "external_eval_pair_run.current.json"
+          summary.write_text(json.dumps({"status": "ok", "runs": runs}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Compare external eval pair (non-blocking)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 tent_io/harness/tools/check_external_regression.py \
+            --s1 "tent_io/harness/reports/expansion/external_eval.expand_s1.current.json" \
+            --s2 "tent_io/harness/reports/expansion/external_eval.expand_s2.current.json" \
+            --previous "tent_io/harness/reports/expansion/external_eval_compare.previous.json" \
+            --out "tent_io/harness/reports/expansion/external_eval_compare.current.json"
+
       - name: Promote candidate pointer to current
         run: |
           python3 - <<'PY'
@@ -624,6 +708,45 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Write external eval summary snippet
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          compare_path = Path("tent_io/harness/reports/expansion/external_eval_compare.current.json")
+          if not compare_path.exists():
+              raise SystemExit(f"Missing external compare artifact: {compare_path}")
+          payload = json.loads(compare_path.read_text(encoding="utf-8"))
+
+          s1 = payload.get("expand_s1", {}).get("metrics", {})
+          s2 = payload.get("expand_s2", {}).get("metrics", {})
+          deltas = payload.get("deltas_s1_minus_s2", {})
+          lines = [
+              "### External Eval (non-blocking)",
+              "",
+              f"- mode: `{payload.get('mode')}`",
+              f"- favored_profile: `{payload.get('favored_profile')}`",
+              f"- winner_votes: `{payload.get('winner_votes')}`",
+              "",
+              "| metric | expand_s1 | expand_s2 | delta (s1-s2) |",
+              "|---|---:|---:|---:|",
+          ]
+          for key in ("mmlu_pro_acc", "gpqa_acc", "long_context_acc", "consistency_score"):
+              lines.append(
+                  f"| {key} | {s1.get(key)} | {s2.get(key)} | {deltas.get(key)} |"
+              )
+          lines.append("")
+          lines.append(f"Artifact: `{compare_path}`")
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Upload expansion artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -639,6 +762,11 @@ jobs:
             tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.json
             tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.md
             tent_io/harness/reports/expansion/llt_expansion_history.ndjson
+            tent_io/harness/reports/expansion/external_eval.expand_s1.current.json
+            tent_io/harness/reports/expansion/external_eval.expand_s2.current.json
+            tent_io/harness/reports/expansion/external_eval_pair_run.current.json
+            tent_io/harness/reports/expansion/external_eval_compare.previous.json
+            tent_io/harness/reports/expansion/external_eval_compare.current.json
             tent_io/harness/reports/expansion/full_stage_pipeline.*.json
           if-no-files-found: error
 
