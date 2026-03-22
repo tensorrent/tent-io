@@ -9,6 +9,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def run_cmd(cmd: list[str], cwd: Path) -> tuple[int, str, str]:
     p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True)
@@ -101,7 +103,7 @@ def main() -> int:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("/Users/coo-koba42/dev/tent_io/harness/reports/full_stage_pipeline.current.json"),
+        default=REPO_ROOT / "tent_io" / "harness" / "reports" / "full_stage_pipeline.current.json",
     )
     args = parser.parse_args()
     strict_mode = args.strict or args.production
@@ -113,7 +115,7 @@ def main() -> int:
     run_merkle_scroll_export = run_midi_scroll_export and not args.skip_merkle_scroll_export
 
 
-    root = Path("/Users/coo-koba42/dev")
+    root = REPO_ROOT
     run_started = datetime.now(timezone.utc)
     run_id = run_started.strftime("%Y%m%dT%H%M%S") + f"{run_started.microsecond // 1000:03d}Z"
     report: dict[str, object] = {
