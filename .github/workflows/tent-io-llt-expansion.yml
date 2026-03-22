@@ -387,20 +387,6 @@ jobs:
           print(json.dumps({"status": "ok", "min_delta": min_delta, "delta": delta, "before": before_acc, "after": after_acc}, indent=2))
           PY
 
-      - name: Baseline drift alarm (expansion-sweep)
-        run: |
-          python3 tent_io/harness/check_llt_baseline_alarm.py \
-            --summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
-            --expected-profile "expand_s2" \
-            --max-train-eval-drift 0.0 \
-            --require-train-gate-pass \
-            --require-replay-gate-pass \
-            --require-drift-gate-pass \
-            --min-train-mmlu "${RESOLVED_LLT_MIN_MMLU_TEST_ACC}" \
-            --min-train-conversational "${RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC}" \
-            --min-eval-mmlu "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
-            --min-eval-conversational "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}"
-
       - name: Snapshot previous external compare (expansion-sweep)
         if: ${{ inputs.enable_external_eval }}
         run: |
@@ -479,6 +465,20 @@ jobs:
             --s2 "tent_io/harness/reports/expansion/external_eval.expand_s2.current.json" \
             --previous "tent_io/harness/reports/expansion/external_eval_compare.previous.json" \
             --out "tent_io/harness/reports/expansion/external_eval_compare.current.json"
+
+      - name: Baseline drift alarm (expansion-sweep)
+        run: |
+          python3 tent_io/harness/check_llt_baseline_alarm.py \
+            --summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --expected-profile "expand_s2" \
+            --max-train-eval-drift 0.0 \
+            --require-train-gate-pass \
+            --require-replay-gate-pass \
+            --require-drift-gate-pass \
+            --min-train-mmlu "${RESOLVED_LLT_MIN_MMLU_TEST_ACC}" \
+            --min-train-conversational "${RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC}" \
+            --min-eval-mmlu "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
+            --min-eval-conversational "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}"
 
       - name: Promote candidate pointer to current
         run: |
