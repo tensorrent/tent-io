@@ -58,6 +58,58 @@ on:
         required: false
         default: "off"
         type: string
+      enable_external_eval:
+        description: "Run non-blocking external-eval comparison lane for expand_s1 vs expand_s2."
+        required: false
+        default: true
+        type: boolean
+      allow_baseline_change:
+        description: "Allow baseline profile change without failing baseline drift check."
+        required: false
+        default: false
+        type: boolean
+      enforce_promotion_decision_policy:
+        description: "When true, skip pointer promotion unless promotion_decision.current.json allows it."
+        required: false
+        default: false
+        type: boolean
+      regression_min_delta_final_test_acc:
+        description: "Fail when best final_test_acc delta vs previous is below this value."
+        required: false
+        default: "-0.01"
+        type: string
+      regression_min_delta_mmlu_test_acc:
+        description: "Fail when best MMLU delta vs previous is below this value."
+        required: false
+        default: "-0.01"
+        type: string
+      regression_min_delta_conversational_test_acc:
+        description: "Fail when best conversational delta vs previous is below this value."
+        required: false
+        default: "-0.02"
+        type: string
+      regression_max_delta_drift:
+        description: "Fail when best drift increases above this delta."
+        required: false
+        default: "0.0"
+        type: string
+      promotion_alignment_required_runs:
+        description: "Aligned internal/external winner runs required before promotion is allowed by decision policy."
+        required: false
+        default: "2"
+        type: string
+      promotion_min_internal_margin:
+        description: "Minimum internal rank metric margin (best-vs-second) for promotion readiness."
+        required: false
+        default: "0.0"
+        type: string
+      promotion_min_external_vote_margin:
+        description: "Minimum external winner vote margin for promotion readiness."
+        required: false
+        default: "0"
+        type: string
+  schedule:
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
@@ -69,6 +121,7 @@ concurrency:
 jobs:
   expansion-sweep:
     name: Run LLT expansion sweep
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -120,6 +173,13 @@ jobs:
 
           floor = parse_float("min_best_final_test_acc", "${{ inputs.min_best_final_test_acc }}")
           delta = parse_float("min_delta_vs_previous_best", "${{ inputs.min_delta_vs_previous_best }}", allow_empty=True)
+          reg_final = parse_float("regression_min_delta_final_test_acc", "${{ inputs.regression_min_delta_final_test_acc }}")
+          reg_mmlu = parse_float("regression_min_delta_mmlu_test_acc", "${{ inputs.regression_min_delta_mmlu_test_acc }}")
+          reg_conv = parse_float("regression_min_delta_conversational_test_acc", "${{ inputs.regression_min_delta_conversational_test_acc }}")
+          reg_drift = parse_float("regression_max_delta_drift", "${{ inputs.regression_max_delta_drift }}")
+          align_runs = parse_int("promotion_alignment_required_runs", "${{ inputs.promotion_alignment_required_runs }}", min_value=1)
+          promotion_internal_margin = parse_float("promotion_min_internal_margin", "${{ inputs.promotion_min_internal_margin }}")
+          promotion_external_vote_margin = parse_int("promotion_min_external_vote_margin", "${{ inputs.promotion_min_external_vote_margin }}", min_value=0)
           keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
           top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
           window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
@@ -145,6 +205,13 @@ jobs:
                       "status": "ok",
                       "min_best_final_test_acc": floor,
                       "min_delta_vs_previous_best": delta,
+                      "regression_min_delta_final_test_acc": reg_final,
+                      "regression_min_delta_mmlu_test_acc": reg_mmlu,
+                      "regression_min_delta_conversational_test_acc": reg_conv,
+                      "regression_max_delta_drift": reg_drift,
+                      "promotion_alignment_required_runs": align_runs,
+                      "promotion_min_internal_margin": promotion_internal_margin,
+                      "promotion_min_external_vote_margin": promotion_external_vote_margin,
                       "promotion_history_keep_last": keep_last,
                       "promotion_summary_top_k": top_k,
                       "promotion_summary_history_window": window,
@@ -216,6 +283,20 @@ jobs:
           out.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
           PY
 
+      - name: Snapshot previous sweep summary (expansion-sweep)
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          current = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+          out = Path("tent_io/harness/reports/expansion/llt_expansion_previous.current.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          if current.exists():
+              out.write_text(current.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              out.write_text(json.dumps({"status": "missing_previous_summary"}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Execute LLT expansion sweep
         run: |
           set +e
@@ -268,6 +349,28 @@ jobs:
           print(json.dumps({"status": "ok", "floor": floor, "best_final_test_acc": best_acc}, indent=2))
           PY
 
+      - name: Enforce baseline immutability (expansion-sweep)
+        run: |
+          CMD=(
+            python3 tent_io/harness/tools/check_baseline_drift.py
+            --current "tent_io/harness/reports/expansion/llt_expansion_baseline_before_expansion.current.json"
+            --challenger "tent_io/harness/reports/expansion/llt_expansion_best.candidate.json"
+          )
+          if [[ "${{ inputs.allow_baseline_change }}" == "true" ]]; then
+            CMD+=(--allow-change)
+          fi
+          "${CMD[@]}"
+
+      - name: Regression delta gate (expansion-sweep)
+        run: |
+          python3 tent_io/harness/tools/check_regression.py \
+            --current "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --previous "tent_io/harness/reports/expansion/llt_expansion_previous.current.json" \
+            --min-delta-final-test-acc "${{ inputs.regression_min_delta_final_test_acc }}" \
+            --min-delta-mmlu-test-acc "${{ inputs.regression_min_delta_mmlu_test_acc }}" \
+            --min-delta-conversational-test-acc "${{ inputs.regression_min_delta_conversational_test_acc }}" \
+            --max-delta-drift "${{ inputs.regression_max_delta_drift }}"
+
       - name: Enforce optional delta-vs-previous guard
         if: ${{ inputs.min_delta_vs_previous_best != '' }}
         run: |
@@ -310,6 +413,222 @@ jobs:
           print(json.dumps({"status": "ok", "min_delta": min_delta, "delta": delta, "before": before_acc, "after": after_acc}, indent=2))
           PY
 
+      - name: Snapshot previous external compare (expansion-sweep)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          current = Path("tent_io/harness/reports/expansion/external_eval_compare.current.json")
+          previous = Path("tent_io/harness/reports/expansion/external_eval_compare.previous.json")
+          previous.parent.mkdir(parents=True, exist_ok=True)
+          if current.exists():
+              previous.write_text(current.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              previous.write_text(
+                  json.dumps({"status": "missing_previous_external_compare"}, indent=2, ensure_ascii=True) + "\n",
+                  encoding="utf-8",
+              )
+          PY
+
+      - name: Run external eval for expand_s1 and expand_s2 (expansion-sweep)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          export EXTERNAL_EVAL_RANK_BY="${{ inputs.expansion_rank_by }}"
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          base = Path("tent_io/harness/reports/expansion")
+          base.mkdir(parents=True, exist_ok=True)
+          runs = []
+          rank_by = os.environ.get("EXTERNAL_EVAL_RANK_BY", "mmlu_test_acc")
+          for profile in ("expand_s1", "expand_s2"):
+              matches = sorted(base.glob(f"full_stage_pipeline.{profile}.*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+              out = base / f"external_eval.{profile}.current.json"
+              if not matches:
+                  bootstrap_dir = base / "external_eval_profile_reports"
+                  bootstrap_dir.mkdir(parents=True, exist_ok=True)
+                  bootstrap_out = base / f"external_eval_bootstrap.{profile}.json"
+                  bootstrap_md = base / f"external_eval_bootstrap.{profile}.md"
+                  bootstrap_best = base / f"external_eval_bootstrap.{profile}.best.json"
+                  bootstrap_history = base / f"external_eval_bootstrap.{profile}.history.ndjson"
+                  bootstrap_cmd = [
+                      "python3",
+                      "tent_io/harness/run_llt_expansion_sweep.py",
+                      "--profiles",
+                      profile,
+                      "--rank-by",
+                      rank_by,
+                      "--query",
+                      f"external eval bootstrap {profile}",
+                      "--llt-min-mmlu-test-acc",
+                      "0.205",
+                      "--llt-min-conversational-test-acc",
+                      "0.130",
+                      "--llt-min-eval-mmlu-acc",
+                      "0.205",
+                      "--llt-min-eval-conversational-acc",
+                      "0.130",
+                      "--out",
+                      str(bootstrap_out),
+                      "--summary-md-out",
+                      str(bootstrap_md),
+                      "--best-pointer-out",
+                      str(bootstrap_best),
+                      "--history-out",
+                      str(bootstrap_history),
+                      "--profile-reports-dir",
+                      str(bootstrap_dir),
+                  ]
+                  boot = subprocess.run(bootstrap_cmd, capture_output=True, text=True)
+                  if boot.returncode != 0:
+                      payload = {
+                          "status": "skipped",
+                          "reason": "bootstrap_profile_run_failed",
+                          "profile": profile,
+                          "pipeline_report": None,
+                          "bootstrap_rc": boot.returncode,
+                          "bootstrap_stdout_tail": boot.stdout[-500:],
+                          "bootstrap_stderr_tail": boot.stderr[-500:],
+                      }
+                      out.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+                      runs.append(payload)
+                      continue
+                  matches = sorted(bootstrap_dir.glob(f"full_stage_pipeline.{profile}.*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+                  if not matches:
+                      payload = {
+                          "status": "skipped",
+                          "reason": "bootstrap_profile_report_missing",
+                          "profile": profile,
+                          "pipeline_report": None,
+                      }
+                      out.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+                      runs.append(payload)
+                      continue
+              report_path = matches[0]
+              cmd = [
+                  "python3",
+                  "tent_io/harness/run_external_eval.py",
+                  "--profile",
+                  profile,
+                  "--pipeline-report",
+                  str(report_path),
+                  "--out",
+                  str(out),
+              ]
+              proc = subprocess.run(cmd, capture_output=True, text=True)
+              runs.append(
+                  {
+                      "profile": profile,
+                      "pipeline_report": str(report_path),
+                      "out": str(out),
+                      "rc": proc.returncode,
+                      "stdout_tail": proc.stdout[-500:],
+                      "stderr_tail": proc.stderr[-500:],
+                  }
+              )
+              if proc.returncode != 0:
+                  raise SystemExit(f"External eval failed for {profile}: rc={proc.returncode}")
+          summary = base / "external_eval_pair_run.current.json"
+          summary.write_text(json.dumps({"status": "ok", "runs": runs}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Compare external eval pair (non-blocking)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 tent_io/harness/tools/check_external_regression.py \
+            --s1 "tent_io/harness/reports/expansion/external_eval.expand_s1.current.json" \
+            --s2 "tent_io/harness/reports/expansion/external_eval.expand_s2.current.json" \
+            --previous "tent_io/harness/reports/expansion/external_eval_compare.previous.json" \
+            --out "tent_io/harness/reports/expansion/external_eval_compare.current.json"
+
+      - name: Compute promotion decision state (non-blocking)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 tent_io/harness/tools/compute_promotion_decision.py \
+            --internal-summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --external-compare "tent_io/harness/reports/expansion/external_eval_compare.current.json" \
+            --out "tent_io/harness/reports/expansion/promotion_decision.current.json" \
+            --history-out "tent_io/harness/reports/expansion/promotion_decision.history.ndjson" \
+            --alignment-required-runs "${{ inputs.promotion_alignment_required_runs }}" \
+            --min-internal-margin "${{ inputs.promotion_min_internal_margin }}" \
+            --min-external-vote-margin "${{ inputs.promotion_min_external_vote_margin }}"
+
+      - name: Summarize promotion decision trend (non-blocking)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 tent_io/harness/tools/summarize_promotion_decision_trend.py \
+            --history "tent_io/harness/reports/expansion/promotion_decision.history.ndjson" \
+            --out-json "tent_io/harness/reports/expansion/promotion_decision_trend.current.json" \
+            --out-md "tent_io/harness/reports/expansion/promotion_decision_trend.current.md" \
+            --window 20
+
+      - name: Write pre-alarm decision summary (always before hard gate)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          external_path = Path("tent_io/harness/reports/expansion/external_eval_compare.current.json")
+          decision_path = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          trend_path = Path("tent_io/harness/reports/expansion/promotion_decision_trend.current.json")
+          lines = [
+              "### Pre-Alarm Decision Snapshot",
+              "",
+          ]
+          if external_path.exists():
+              ext = json.loads(external_path.read_text(encoding="utf-8"))
+              lines.extend(
+                  [
+                      f"- external_mode: `{ext.get('mode')}`",
+                      f"- external_favored_profile: `{ext.get('favored_profile')}`",
+                      f"- external_winner_votes: `{ext.get('winner_votes')}`",
+                  ]
+              )
+          else:
+              lines.append("- external_compare: `missing`")
+          if decision_path.exists():
+              dec = json.loads(decision_path.read_text(encoding="utf-8"))
+              enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
+              promotion_action = "promote_if_hard_gates_pass"
+              if enforce_policy and dec.get("promotion_allowed") is not True:
+                  promotion_action = "blocked_by_policy"
+              lines.extend(
+                  [
+                      f"- decision_state: `{dec.get('decision_state')}`",
+                      f"- promotion_allowed: `{dec.get('promotion_allowed')}`",
+                      f"- promotion_action: `{promotion_action}`",
+                      f"- internal_winner: `{dec.get('internal_winner')}`",
+                      f"- external_winner: `{dec.get('external_winner')}`",
+                      f"- aligned_streak: `{dec.get('aligned_streak')}` / `{dec.get('alignment_required_runs')}`",
+                  ]
+              )
+          else:
+              lines.append("- promotion_decision: `missing`")
+          if trend_path.exists():
+              trend = json.loads(trend_path.read_text(encoding="utf-8"))
+              lines.extend(
+                  [
+                      f"- decision_regime_label: `{trend.get('regime_label')}`",
+                      f"- decision_latest_state: `{trend.get('latest_state')}`",
+                      f"- decision_contested_ratio_recent: `{trend.get('contested_ratio_recent')}`",
+                      f"- decision_counts_recent: `{trend.get('counts_recent')}`",
+                  ]
+              )
+          else:
+              lines.append("- decision_trend: `missing`")
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Baseline drift alarm (expansion-sweep)
         run: |
           python3 tent_io/harness/check_llt_baseline_alarm.py \
@@ -335,6 +654,9 @@ jobs:
           current = Path("tent_io/harness/reports/expansion/llt_expansion_best.current.json")
           audit = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.expansion_sweep.current.json")
           audit_history = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson")
+          decision = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
+          external_enabled = "${{ inputs.enable_external_eval }}" == "true"
 
           def load_json(path: Path) -> dict:
               if not path.exists():
@@ -347,6 +669,27 @@ jobs:
 
           if not candidate.exists():
               raise SystemExit(f"Missing candidate pointer: {candidate}")
+          if enforce_policy and external_enabled:
+              decision_payload = load_json(decision)
+              promotion_allowed = decision_payload.get("promotion_allowed") is True
+              if not promotion_allowed:
+                  payload = {
+                      "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                      "status": "skipped",
+                      "reason": "promotion_decision_blocked",
+                      "job": "expansion-sweep",
+                      "decision_path": str(decision),
+                      "decision_state": decision_payload.get("decision_state"),
+                      "promotion_allowed": decision_payload.get("promotion_allowed"),
+                      "promoted_from": str(candidate),
+                      "promoted_to": str(current),
+                  }
+                  audit.parent.mkdir(parents=True, exist_ok=True)
+                  audit.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+                  with audit_history.open("a", encoding="utf-8") as f:
+                      f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+                  print(json.dumps(payload, indent=2, ensure_ascii=True))
+                  raise SystemExit(0)
           before = load_json(current)
           after = load_json(candidate)
           current.parent.mkdir(parents=True, exist_ok=True)
@@ -481,6 +824,13 @@ jobs:
               f"- delta_vs_previous_best: `{delta_vs_previous}`",
               f"- delta_guard_passes: `{delta_guard_passes}`",
               f"- delta_guard_status: **{delta_status}** {delta_badge}",
+              "- regression_thresholds: "
+              f"`final=${{ inputs.regression_min_delta_final_test_acc }}, "
+              f"mmlu=${{ inputs.regression_min_delta_mmlu_test_acc }}, "
+              f"conv=${{ inputs.regression_min_delta_conversational_test_acc }}, "
+              f"drift=${{ inputs.regression_max_delta_drift }}`",
+              f"- allow_baseline_change: `${{ inputs.allow_baseline_change }}`",
+              f"- enforce_promotion_decision_policy: `${{ inputs.enforce_promotion_decision_policy }}`",
               "",
               f"Artifacts: `{summary_path}`, `tent_io/harness/reports/expansion/llt_expansion_sweep.current.md`",
           ]
@@ -546,6 +896,86 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Write external eval summary snippet
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          compare_path = Path("tent_io/harness/reports/expansion/external_eval_compare.current.json")
+          if not compare_path.exists():
+              raise SystemExit(f"Missing external compare artifact: {compare_path}")
+          payload = json.loads(compare_path.read_text(encoding="utf-8"))
+
+          s1 = payload.get("expand_s1", {}).get("metrics", {})
+          s2 = payload.get("expand_s2", {}).get("metrics", {})
+          deltas = payload.get("deltas_s1_minus_s2", {})
+          lines = [
+              "### External Eval (non-blocking)",
+              "",
+              f"- mode: `{payload.get('mode')}`",
+              f"- favored_profile: `{payload.get('favored_profile')}`",
+              f"- winner_votes: `{payload.get('winner_votes')}`",
+              "",
+              "| metric | expand_s1 | expand_s2 | delta (s1-s2) |",
+              "|---|---:|---:|---:|",
+          ]
+          for key in ("mmlu_pro_acc", "gpqa_acc", "long_context_acc", "consistency_score"):
+              lines.append(
+                  f"| {key} | {s1.get(key)} | {s2.get(key)} | {deltas.get(key)} |"
+              )
+          lines.append("")
+          lines.append(f"Artifact: `{compare_path}`")
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Write promotion decision summary snippet
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          decision_path = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          trend_path = Path("tent_io/harness/reports/expansion/promotion_decision_trend.current.json")
+          if not decision_path.exists():
+              raise SystemExit(f"Missing promotion decision artifact: {decision_path}")
+          payload = json.loads(decision_path.read_text(encoding="utf-8"))
+          trend = {}
+          if trend_path.exists():
+              trend = json.loads(trend_path.read_text(encoding="utf-8"))
+          lines = [
+              "### Promotion Decision (non-blocking)",
+              "",
+              f"- decision_state: `{payload.get('decision_state')}`",
+              f"- promotion_allowed: `{payload.get('promotion_allowed')}`",
+              f"- internal_winner: `{payload.get('internal_winner')}`",
+              f"- external_winner: `{payload.get('external_winner')}`",
+              f"- aligned: `{payload.get('aligned')}`",
+              f"- contested: `{payload.get('contested')}`",
+              f"- aligned_streak: `{payload.get('aligned_streak')}` / `{payload.get('alignment_required_runs')}`",
+              f"- internal_margin: `{payload.get('internal_margin')}` (min `{payload.get('min_internal_margin')}`)",
+              f"- external_vote_margin: `{payload.get('external_vote_margin')}` (min `{payload.get('min_external_vote_margin')}`)",
+              f"- trend_regime_label: `{trend.get('regime_label')}`",
+              f"- trend_counts_recent: `{trend.get('counts_recent')}`",
+              "",
+              f"Artifact: `{decision_path}`",
+              f"Trend: `{trend_path}`",
+          ]
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Upload expansion artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -561,12 +991,21 @@ jobs:
             tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.json
             tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_summary.current.md
             tent_io/harness/reports/expansion/llt_expansion_history.ndjson
+            tent_io/harness/reports/expansion/external_eval.expand_s1.current.json
+            tent_io/harness/reports/expansion/external_eval.expand_s2.current.json
+            tent_io/harness/reports/expansion/external_eval_pair_run.current.json
+            tent_io/harness/reports/expansion/external_eval_compare.previous.json
+            tent_io/harness/reports/expansion/external_eval_compare.current.json
+            tent_io/harness/reports/expansion/promotion_decision.current.json
+            tent_io/harness/reports/expansion/promotion_decision.history.ndjson
+            tent_io/harness/reports/expansion/promotion_decision_trend.current.json
+            tent_io/harness/reports/expansion/promotion_decision_trend.current.md
             tent_io/harness/reports/expansion/full_stage_pipeline.*.json
           if-no-files-found: error
 
   auto-all-compare:
     name: Run auto_all and compare baseline
-    if: ${{ inputs.run_auto_all_compare }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_auto_all_compare }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -618,6 +1057,13 @@ jobs:
 
           floor = parse_float("min_best_final_test_acc", "${{ inputs.min_best_final_test_acc }}")
           delta = parse_float("min_delta_vs_previous_best", "${{ inputs.min_delta_vs_previous_best }}", allow_empty=True)
+          reg_final = parse_float("regression_min_delta_final_test_acc", "${{ inputs.regression_min_delta_final_test_acc }}")
+          reg_mmlu = parse_float("regression_min_delta_mmlu_test_acc", "${{ inputs.regression_min_delta_mmlu_test_acc }}")
+          reg_conv = parse_float("regression_min_delta_conversational_test_acc", "${{ inputs.regression_min_delta_conversational_test_acc }}")
+          reg_drift = parse_float("regression_max_delta_drift", "${{ inputs.regression_max_delta_drift }}")
+          align_runs = parse_int("promotion_alignment_required_runs", "${{ inputs.promotion_alignment_required_runs }}", min_value=1)
+          promotion_internal_margin = parse_float("promotion_min_internal_margin", "${{ inputs.promotion_min_internal_margin }}")
+          promotion_external_vote_margin = parse_int("promotion_min_external_vote_margin", "${{ inputs.promotion_min_external_vote_margin }}", min_value=0)
           keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
           top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
           window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
@@ -640,6 +1086,13 @@ jobs:
                       "status": "ok",
                       "min_best_final_test_acc": floor,
                       "min_delta_vs_previous_best": delta,
+                      "regression_min_delta_final_test_acc": reg_final,
+                      "regression_min_delta_mmlu_test_acc": reg_mmlu,
+                      "regression_min_delta_conversational_test_acc": reg_conv,
+                      "regression_max_delta_drift": reg_drift,
+                      "promotion_alignment_required_runs": align_runs,
+                      "promotion_min_internal_margin": promotion_internal_margin,
+                      "promotion_min_external_vote_margin": promotion_external_vote_margin,
                       "promotion_history_keep_last": keep_last,
                       "promotion_summary_top_k": top_k,
                       "promotion_summary_history_window": window,
@@ -710,6 +1163,20 @@ jobs:
           out.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
           PY
 
+      - name: Snapshot previous sweep summary (auto_all)
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          current = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+          out = Path("tent_io/harness/reports/expansion/llt_expansion_previous.current.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          if current.exists():
+              out.write_text(current.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              out.write_text(json.dumps({"status": "missing_previous_summary"}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Execute LLT expansion sweep (auto_all)
         run: |
           set +e
@@ -761,6 +1228,28 @@ jobs:
               )
           print(json.dumps({"status": "ok", "floor": floor, "best_final_test_acc": best_acc}, indent=2))
           PY
+
+      - name: Enforce baseline immutability (auto_all)
+        run: |
+          CMD=(
+            python3 tent_io/harness/tools/check_baseline_drift.py
+            --current "tent_io/harness/reports/expansion/llt_expansion_baseline_before.current.json"
+            --challenger "tent_io/harness/reports/expansion/llt_expansion_best.candidate.json"
+          )
+          if [[ "${{ inputs.allow_baseline_change }}" == "true" ]]; then
+            CMD+=(--allow-change)
+          fi
+          "${CMD[@]}"
+
+      - name: Regression delta gate (auto_all)
+        run: |
+          python3 tent_io/harness/tools/check_regression.py \
+            --current "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --previous "tent_io/harness/reports/expansion/llt_expansion_previous.current.json" \
+            --min-delta-final-test-acc "${{ inputs.regression_min_delta_final_test_acc }}" \
+            --min-delta-mmlu-test-acc "${{ inputs.regression_min_delta_mmlu_test_acc }}" \
+            --min-delta-conversational-test-acc "${{ inputs.regression_min_delta_conversational_test_acc }}" \
+            --max-delta-drift "${{ inputs.regression_max_delta_drift }}"
 
       - name: Enforce optional delta-vs-previous guard (auto_all)
         if: ${{ inputs.min_delta_vs_previous_best != '' }}
@@ -829,6 +1318,9 @@ jobs:
           current = Path("tent_io/harness/reports/expansion/llt_expansion_best.current.json")
           audit = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion.auto_all.current.json")
           audit_history = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson")
+          decision = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
+          external_enabled = "${{ inputs.enable_external_eval }}" == "true"
 
           def load_json(path: Path) -> dict:
               if not path.exists():
@@ -841,6 +1333,27 @@ jobs:
 
           if not candidate.exists():
               raise SystemExit(f"Missing candidate pointer: {candidate}")
+          if enforce_policy and external_enabled:
+              decision_payload = load_json(decision)
+              promotion_allowed = decision_payload.get("promotion_allowed") is True
+              if not promotion_allowed:
+                  payload = {
+                      "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                      "status": "skipped",
+                      "reason": "promotion_decision_blocked",
+                      "job": "auto-all-compare",
+                      "decision_path": str(decision),
+                      "decision_state": decision_payload.get("decision_state"),
+                      "promotion_allowed": decision_payload.get("promotion_allowed"),
+                      "promoted_from": str(candidate),
+                      "promoted_to": str(current),
+                  }
+                  audit.parent.mkdir(parents=True, exist_ok=True)
+                  audit.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+                  with audit_history.open("a", encoding="utf-8") as f:
+                      f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+                  print(json.dumps(payload, indent=2, ensure_ascii=True))
+                  raise SystemExit(0)
           before = load_json(current)
           after = load_json(candidate)
           current.parent.mkdir(parents=True, exist_ok=True)
@@ -1105,5 +1618,101 @@ jobs:
             tent_io/harness/reports/expansion/llt_expansion_history.ndjson
             tent_io/harness/reports/expansion/llt_expansion_baseline_before.current.json
             tent_io/harness/reports/expansion/llt_expansion_baseline_change.current.json
+            tent_io/harness/reports/expansion/full_stage_pipeline.*.json
+          if-no-files-found: error
+
+  scheduled-auto-all-guard:
+    name: Scheduled auto_all baseline guard
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create legacy absolute-path compatibility symlink
+        run: |
+          sudo mkdir -p /Users/coo-koba42
+          if [[ -e /Users/coo-koba42/dev || -L /Users/coo-koba42/dev ]]; then
+            sudo rm -rf /Users/coo-koba42/dev
+          fi
+          sudo ln -s "$GITHUB_WORKSPACE" /Users/coo-koba42/dev
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy
+
+      - name: Resolve conservative split-gate profile
+        run: |
+          echo "RESOLVED_LLT_MIN_MMLU_TEST_ACC=0.205" >> "$GITHUB_ENV"
+          echo "RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC=0.130" >> "$GITHUB_ENV"
+          echo "RESOLVED_LLT_MIN_EVAL_MMLU_ACC=0.205" >> "$GITHUB_ENV"
+          echo "RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC=0.130" >> "$GITHUB_ENV"
+
+      - name: Snapshot baseline pointer and summary
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          base = Path("tent_io/harness/reports/expansion")
+          base.mkdir(parents=True, exist_ok=True)
+          pointer = base / "llt_expansion_best.current.json"
+          before_pointer = base / "llt_expansion_baseline_before.scheduled.current.json"
+          summary = base / "llt_expansion_sweep.current.json"
+          before_summary = base / "llt_expansion_previous.scheduled.current.json"
+          if pointer.exists():
+              before_pointer.write_text(pointer.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              before_pointer.write_text(json.dumps({"status": "missing_pointer"}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          if summary.exists():
+              before_summary.write_text(summary.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              before_summary.write_text(json.dumps({"status": "missing_previous_summary"}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Run scheduled auto_all adversarial sweep
+        run: |
+          python3 tent_io/harness/run_llt_expansion_sweep.py \
+            --profiles auto_all \
+            --rank-by mmlu_test_acc \
+            --query "scheduled adversarial baseline guard" \
+            --llt-min-mmlu-test-acc "${RESOLVED_LLT_MIN_MMLU_TEST_ACC}" \
+            --llt-min-conversational-test-acc "${RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC}" \
+            --llt-min-eval-mmlu-acc "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
+            --llt-min-eval-conversational-acc "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}" \
+            --best-pointer-out "tent_io/harness/reports/expansion/llt_expansion_best.candidate.scheduled.json"
+
+      - name: Enforce scheduled baseline immutability
+        run: |
+          python3 tent_io/harness/tools/check_baseline_drift.py \
+            --current "tent_io/harness/reports/expansion/llt_expansion_baseline_before.scheduled.current.json" \
+            --challenger "tent_io/harness/reports/expansion/llt_expansion_best.candidate.scheduled.json"
+
+      - name: Enforce scheduled regression deltas
+        run: |
+          python3 tent_io/harness/tools/check_regression.py \
+            --current "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --previous "tent_io/harness/reports/expansion/llt_expansion_previous.scheduled.current.json" \
+            --min-delta-final-test-acc -0.01 \
+            --min-delta-mmlu-test-acc -0.01 \
+            --min-delta-conversational-test-acc -0.02 \
+            --max-delta-drift 0.0
+
+      - name: Upload scheduled guard artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llt-expansion-scheduled-guard
+          path: |
+            tent_io/harness/reports/expansion/llt_expansion_sweep.current.json
+            tent_io/harness/reports/expansion/llt_expansion_sweep.current.md
+            tent_io/harness/reports/expansion/llt_expansion_best.candidate.scheduled.json
+            tent_io/harness/reports/expansion/llt_expansion_baseline_before.scheduled.current.json
+            tent_io/harness/reports/expansion/llt_expansion_previous.scheduled.current.json
             tent_io/harness/reports/expansion/full_stage_pipeline.*.json
           if-no-files-found: error
