@@ -97,24 +97,15 @@ def main() -> int:
     meets_external_margin = external_vote_margin >= args.min_external_vote_margin
 
     history = parse_history(args.history_out)
-    record = {
-        "timestamp_utc": now_utc(),
+    probe_record = {
         "internal_winner": internal_winner,
         "external_winner": external_winner,
         "aligned": aligned,
         "contested": contested,
-        "internal_margin": internal_margin,
-        "external_vote_margin": external_vote_margin,
-        "meets_internal_margin": meets_internal_margin,
-        "meets_external_margin": meets_external_margin,
     }
-    args.history_out.parent.mkdir(parents=True, exist_ok=True)
-    with args.history_out.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=True) + "\n")
-
-    history.append(record)
+    history_with_current = history + [probe_record]
     aligned_streak = 0
-    for row in reversed(history):
+    for row in reversed(history_with_current):
         if (
             isinstance(row, dict)
             and row.get("aligned") is True
@@ -137,6 +128,25 @@ def main() -> int:
         decision_state = "aligned_ready_for_promotion"
 
     promotion_allowed = decision_state == "aligned_ready_for_promotion"
+    record = {
+        "timestamp_utc": now_utc(),
+        "decision_state": decision_state,
+        "promotion_allowed": promotion_allowed,
+        "internal_winner": internal_winner,
+        "external_winner": external_winner,
+        "aligned": aligned,
+        "contested": contested,
+        "aligned_streak": aligned_streak,
+        "alignment_required_runs": args.alignment_required_runs,
+        "internal_margin": internal_margin,
+        "external_vote_margin": external_vote_margin,
+        "meets_internal_margin": meets_internal_margin,
+        "meets_external_margin": meets_external_margin,
+    }
+    args.history_out.parent.mkdir(parents=True, exist_ok=True)
+    with args.history_out.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=True) + "\n")
+
     out = {
         "status": "ok",
         "decision_state": decision_state,

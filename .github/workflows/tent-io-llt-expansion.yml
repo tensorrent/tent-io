@@ -552,6 +552,15 @@ jobs:
             --min-internal-margin "${{ inputs.promotion_min_internal_margin }}" \
             --min-external-vote-margin "${{ inputs.promotion_min_external_vote_margin }}"
 
+      - name: Summarize promotion decision trend (non-blocking)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 tent_io/harness/tools/summarize_promotion_decision_trend.py \
+            --history "tent_io/harness/reports/expansion/promotion_decision.history.ndjson" \
+            --out-json "tent_io/harness/reports/expansion/promotion_decision_trend.current.json" \
+            --out-md "tent_io/harness/reports/expansion/promotion_decision_trend.current.md" \
+            --window 20
+
       - name: Write pre-alarm decision summary (always before hard gate)
         if: ${{ inputs.enable_external_eval }}
         run: |
@@ -562,6 +571,7 @@ jobs:
 
           external_path = Path("tent_io/harness/reports/expansion/external_eval_compare.current.json")
           decision_path = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          trend_path = Path("tent_io/harness/reports/expansion/promotion_decision_trend.current.json")
           lines = [
               "### Pre-Alarm Decision Snapshot",
               "",
@@ -590,6 +600,18 @@ jobs:
               )
           else:
               lines.append("- promotion_decision: `missing`")
+          if trend_path.exists():
+              trend = json.loads(trend_path.read_text(encoding="utf-8"))
+              lines.extend(
+                  [
+                      f"- decision_regime_label: `{trend.get('regime_label')}`",
+                      f"- decision_latest_state: `{trend.get('latest_state')}`",
+                      f"- decision_contested_ratio_recent: `{trend.get('contested_ratio_recent')}`",
+                      f"- decision_counts_recent: `{trend.get('counts_recent')}`",
+                  ]
+              )
+          else:
+              lines.append("- decision_trend: `missing`")
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary_path:
               with open(summary_path, "a", encoding="utf-8") as f:
@@ -887,9 +909,13 @@ jobs:
           from pathlib import Path
 
           decision_path = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          trend_path = Path("tent_io/harness/reports/expansion/promotion_decision_trend.current.json")
           if not decision_path.exists():
               raise SystemExit(f"Missing promotion decision artifact: {decision_path}")
           payload = json.loads(decision_path.read_text(encoding="utf-8"))
+          trend = {}
+          if trend_path.exists():
+              trend = json.loads(trend_path.read_text(encoding="utf-8"))
           lines = [
               "### Promotion Decision (non-blocking)",
               "",
@@ -902,8 +928,11 @@ jobs:
               f"- aligned_streak: `{payload.get('aligned_streak')}` / `{payload.get('alignment_required_runs')}`",
               f"- internal_margin: `{payload.get('internal_margin')}` (min `{payload.get('min_internal_margin')}`)",
               f"- external_vote_margin: `{payload.get('external_vote_margin')}` (min `{payload.get('min_external_vote_margin')}`)",
+              f"- trend_regime_label: `{trend.get('regime_label')}`",
+              f"- trend_counts_recent: `{trend.get('counts_recent')}`",
               "",
               f"Artifact: `{decision_path}`",
+              f"Trend: `{trend_path}`",
           ]
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary_path:
@@ -934,6 +963,8 @@ jobs:
             tent_io/harness/reports/expansion/external_eval_compare.current.json
             tent_io/harness/reports/expansion/promotion_decision.current.json
             tent_io/harness/reports/expansion/promotion_decision.history.ndjson
+            tent_io/harness/reports/expansion/promotion_decision_trend.current.json
+            tent_io/harness/reports/expansion/promotion_decision_trend.current.md
             tent_io/harness/reports/expansion/full_stage_pipeline.*.json
           if-no-files-found: error
 
