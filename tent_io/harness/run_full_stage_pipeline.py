@@ -45,6 +45,11 @@ def main() -> int:
     parser.add_argument("--strict", action="store_true", help="Fail closed on stage error")
     parser.add_argument("--with-bingo", action="store_true", help="Include Bingo stage in orchestrator")
     parser.add_argument(
+        "--skip-orchestrator",
+        action="store_true",
+        help="Skip SEGGCI/OmniForge orchestrator stage (for focused training/eval sweeps).",
+    )
+    parser.add_argument(
         "--with-voxel-eval",
         action="store_true",
         help="Run voxel-stack best-checkpoint eval as post stage",
@@ -124,6 +129,7 @@ def main() -> int:
         "production": args.production,
         "strict": strict_mode,
         "with_bingo": args.with_bingo,
+        "with_orchestrator": not args.skip_orchestrator,
         "with_voxel_eval": run_voxel_eval,
         "with_llt_train": run_llt_train,
         "with_llt_eval": run_llt_eval,
@@ -158,17 +164,18 @@ def main() -> int:
         ),
     ]
 
-    orch_cmd = [
-        "python3",
-        "tent_io/harness/run_seggci_omniforge_stack.py",
-        "--query",
-        args.query,
-    ]
-    if strict_mode:
-        orch_cmd.append("--strict")
-    if args.with_bingo:
-        orch_cmd.append("--with-bingo")
-    stages.append(("run_stack_orchestrator", orch_cmd))
+    if not args.skip_orchestrator:
+        orch_cmd = [
+            "python3",
+            "tent_io/harness/run_seggci_omniforge_stack.py",
+            "--query",
+            args.query,
+        ]
+        if strict_mode:
+            orch_cmd.append("--strict")
+        if args.with_bingo:
+            orch_cmd.append("--with-bingo")
+        stages.append(("run_stack_orchestrator", orch_cmd))
 
     if run_voxel_eval:
         stages.append(

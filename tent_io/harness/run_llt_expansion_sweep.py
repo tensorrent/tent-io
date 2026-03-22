@@ -290,6 +290,7 @@ def main() -> int:
             "python3",
             "tent_io/harness/run_full_stage_pipeline.py",
             "--production",
+            "--skip-orchestrator",
             "--skip-voxel-eval",
             "--query",
             args.query,
