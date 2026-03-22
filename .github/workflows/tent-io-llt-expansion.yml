@@ -235,6 +235,12 @@ jobs:
             if [[ -f tent_io/harness/reports/expansion/llt_expansion_sweep.current.json ]]; then
               python3 -c 'import json; from pathlib import Path; p = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json"); print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))'
             fi
+            for f in tent_io/harness/reports/expansion/full_stage_pipeline.*.json; do
+              if [[ -f "$f" ]]; then
+                echo "==== $f ===="
+                python3 -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))' "$f"
+              fi
+            done
             exit $rc
           fi
 
@@ -723,6 +729,12 @@ jobs:
             if [[ -f tent_io/harness/reports/expansion/llt_expansion_sweep.current.json ]]; then
               python3 -c 'import json; from pathlib import Path; p = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json"); print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))'
             fi
+            for f in tent_io/harness/reports/expansion/full_stage_pipeline.*.json; do
+              if [[ -f "$f" ]]; then
+                echo "==== $f ===="
+                python3 -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))' "$f"
+              fi
+            done
             exit $rc
           fi
 
