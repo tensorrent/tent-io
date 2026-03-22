@@ -88,8 +88,8 @@ def main() -> int:
     s2_votes = int(votes.get("expand_s2", 0) or 0)
     external_vote_margin = abs(s1_votes - s2_votes)
 
-    valid_internal = internal_winner in {"expand_s1", "expand_s2"}
-    valid_external = external_winner in {"expand_s1", "expand_s2"}
+    valid_internal = isinstance(internal_winner, str) and internal_winner != ""
+    valid_external = isinstance(external_winner, str) and external_winner not in {"", "tie_or_missing"}
 
     aligned = valid_internal and valid_external and internal_winner == external_winner
     contested = valid_internal and valid_external and internal_winner != external_winner
