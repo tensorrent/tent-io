@@ -233,12 +233,7 @@ jobs:
           if [[ $rc -ne 0 ]]; then
             echo "Expansion sweep failed with rc=$rc. Dumping summary JSON for diagnosis."
             if [[ -f tent_io/harness/reports/expansion/llt_expansion_sweep.current.json ]]; then
-              python3 - <<'PY'
-              import json
-              from pathlib import Path
-              p = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
-              print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))
-              PY
+              python3 -c 'import json; from pathlib import Path; p = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json"); print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))'
             fi
             exit $rc
           fi
@@ -726,12 +721,7 @@ jobs:
           if [[ $rc -ne 0 ]]; then
             echo "Auto-all sweep failed with rc=$rc. Dumping summary JSON for diagnosis."
             if [[ -f tent_io/harness/reports/expansion/llt_expansion_sweep.current.json ]]; then
-              python3 - <<'PY'
-              import json
-              from pathlib import Path
-              p = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
-              print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))
-              PY
+              python3 -c 'import json; from pathlib import Path; p = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json"); print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))'
             fi
             exit $rc
           fi
