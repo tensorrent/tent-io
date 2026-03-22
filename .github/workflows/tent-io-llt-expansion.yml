@@ -594,10 +594,15 @@ jobs:
               lines.append("- external_compare: `missing`")
           if decision_path.exists():
               dec = json.loads(decision_path.read_text(encoding="utf-8"))
+              enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
+              promotion_action = "promote_if_hard_gates_pass"
+              if enforce_policy and dec.get("promotion_allowed") is not True:
+                  promotion_action = "blocked_by_policy"
               lines.extend(
                   [
                       f"- decision_state: `{dec.get('decision_state')}`",
                       f"- promotion_allowed: `{dec.get('promotion_allowed')}`",
+                      f"- promotion_action: `{promotion_action}`",
                       f"- internal_winner: `{dec.get('internal_winner')}`",
                       f"- external_winner: `{dec.get('external_winner')}`",
                       f"- aligned_streak: `{dec.get('aligned_streak')}` / `{dec.get('alignment_required_runs')}`",
