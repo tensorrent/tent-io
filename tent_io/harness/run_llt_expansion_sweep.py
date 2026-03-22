@@ -10,9 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-EXPANSION_REPORTS_DIR = REPO_ROOT / "tent_io" / "harness" / "reports" / "expansion"
-
 
 PROFILE_CONFIGS: dict[str, dict[str, float | int]] = {
     "expand_s1": {
@@ -206,19 +203,19 @@ def main() -> int:
     parser.add_argument(
         "--out",
         type=Path,
-        default=EXPANSION_REPORTS_DIR / "llt_expansion_sweep.current.json",
+        default=Path("/Users/coo-koba42/dev/tent_io/harness/reports/expansion/llt_expansion_sweep.current.json"),
         help="Sweep summary JSON output.",
     )
     parser.add_argument(
         "--profile-reports-dir",
         type=Path,
-        default=EXPANSION_REPORTS_DIR,
+        default=Path("/Users/coo-koba42/dev/tent_io/harness/reports/expansion"),
         help="Directory for per-profile pipeline reports.",
     )
     parser.add_argument(
         "--best-pointer-out",
         type=Path,
-        default=EXPANSION_REPORTS_DIR / "llt_expansion_best.current.json",
+        default=Path("/Users/coo-koba42/dev/tent_io/harness/reports/expansion/llt_expansion_best.current.json"),
         help="Rolling best-profile pointer JSON output.",
     )
     parser.add_argument("--llt-min-mmlu-test-acc", type=float, default=-1.0)
@@ -228,13 +225,13 @@ def main() -> int:
     parser.add_argument(
         "--summary-md-out",
         type=Path,
-        default=EXPANSION_REPORTS_DIR / "llt_expansion_sweep.current.md",
+        default=Path("/Users/coo-koba42/dev/tent_io/harness/reports/expansion/llt_expansion_sweep.current.md"),
         help="Human-readable markdown summary output.",
     )
     parser.add_argument(
         "--history-out",
         type=Path,
-        default=EXPANSION_REPORTS_DIR / "llt_expansion_history.ndjson",
+        default=Path("/Users/coo-koba42/dev/tent_io/harness/reports/expansion/llt_expansion_history.ndjson"),
         help="Append-only NDJSON history of sweep-level best profile metrics.",
     )
     parser.add_argument(
@@ -275,7 +272,7 @@ def main() -> int:
         )
         return 0
 
-    root = REPO_ROOT
+    root = Path("/Users/coo-koba42/dev")
     run_started = datetime.now(timezone.utc)
     sweep_run_id = run_started.strftime("%Y%m%dT%H%M%S") + f"{run_started.microsecond // 1000:03d}Z"
 

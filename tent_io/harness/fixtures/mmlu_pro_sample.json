@@ -1,0 +1,23 @@
+[
+  {
+    "id": "mmlu_pro_0",
+    "question": "What is the chemical symbol for gold?",
+    "choices": ["Au", "Ag", "Fe", "Gd"],
+    "answer_index": 0,
+    "answer_key": "A"
+  },
+  {
+    "id": "mmlu_pro_1",
+    "question": "Which branch of mathematics studies shapes and the relationships between them?",
+    "choices": ["Algebra", "Geometry", "Calculus", "Statistics"],
+    "answer_index": 1,
+    "answer_key": "B"
+  },
+  {
+    "id": "mmlu_pro_2",
+    "question": "In Newton's second law, force equals mass times what?",
+    "choices": ["Velocity", "Acceleration", "Momentum", "Energy"],
+    "answer_index": 1,
+    "answer_key": "B"
+  }
+]
