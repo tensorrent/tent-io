@@ -552,6 +552,51 @@ jobs:
             --min-internal-margin "${{ inputs.promotion_min_internal_margin }}" \
             --min-external-vote-margin "${{ inputs.promotion_min_external_vote_margin }}"
 
+      - name: Write pre-alarm decision summary (always before hard gate)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          external_path = Path("tent_io/harness/reports/expansion/external_eval_compare.current.json")
+          decision_path = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          lines = [
+              "### Pre-Alarm Decision Snapshot",
+              "",
+          ]
+          if external_path.exists():
+              ext = json.loads(external_path.read_text(encoding="utf-8"))
+              lines.extend(
+                  [
+                      f"- external_mode: `{ext.get('mode')}`",
+                      f"- external_favored_profile: `{ext.get('favored_profile')}`",
+                      f"- external_winner_votes: `{ext.get('winner_votes')}`",
+                  ]
+              )
+          else:
+              lines.append("- external_compare: `missing`")
+          if decision_path.exists():
+              dec = json.loads(decision_path.read_text(encoding="utf-8"))
+              lines.extend(
+                  [
+                      f"- decision_state: `{dec.get('decision_state')}`",
+                      f"- promotion_allowed: `{dec.get('promotion_allowed')}`",
+                      f"- internal_winner: `{dec.get('internal_winner')}`",
+                      f"- external_winner: `{dec.get('external_winner')}`",
+                      f"- aligned_streak: `{dec.get('aligned_streak')}` / `{dec.get('alignment_required_runs')}`",
+                  ]
+              )
+          else:
+              lines.append("- promotion_decision: `missing`")
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Baseline drift alarm (expansion-sweep)
         run: |
           python3 tent_io/harness/check_llt_baseline_alarm.py \
