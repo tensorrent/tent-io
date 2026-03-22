@@ -218,6 +218,7 @@ jobs:
 
       - name: Execute LLT expansion sweep
         run: |
+          set +e
           python3 tent_io/harness/run_llt_expansion_sweep.py \
             --profiles "${{ inputs.profiles }}" \
             --rank-by "${{ inputs.expansion_rank_by }}" \
@@ -227,6 +228,20 @@ jobs:
             --llt-min-eval-mmlu-acc "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
             --llt-min-eval-conversational-acc "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}" \
             --best-pointer-out "tent_io/harness/reports/expansion/llt_expansion_best.candidate.json"
+          rc=$?
+          set -e
+          if [[ $rc -ne 0 ]]; then
+            echo "Expansion sweep failed with rc=$rc. Dumping summary JSON for diagnosis."
+            if [[ -f tent_io/harness/reports/expansion/llt_expansion_sweep.current.json ]]; then
+              python3 - <<'PY'
+              import json
+              from pathlib import Path
+              p = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+              print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))
+              PY
+            fi
+            exit $rc
+          fi
 
       - name: Enforce best-profile accuracy floor
         run: |
@@ -696,6 +711,7 @@ jobs:
 
       - name: Execute LLT expansion sweep (auto_all)
         run: |
+          set +e
           python3 tent_io/harness/run_llt_expansion_sweep.py \
             --profiles "auto_all" \
             --rank-by "${{ inputs.expansion_rank_by }}" \
@@ -705,6 +721,20 @@ jobs:
             --llt-min-eval-mmlu-acc "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
             --llt-min-eval-conversational-acc "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}" \
             --best-pointer-out "tent_io/harness/reports/expansion/llt_expansion_best.candidate.json"
+          rc=$?
+          set -e
+          if [[ $rc -ne 0 ]]; then
+            echo "Auto-all sweep failed with rc=$rc. Dumping summary JSON for diagnosis."
+            if [[ -f tent_io/harness/reports/expansion/llt_expansion_sweep.current.json ]]; then
+              python3 - <<'PY'
+              import json
+              from pathlib import Path
+              p = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+              print(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=2, ensure_ascii=True))
+              PY
+            fi
+            exit $rc
+          fi
 
       - name: Enforce best-profile accuracy floor (auto_all)
         run: |
