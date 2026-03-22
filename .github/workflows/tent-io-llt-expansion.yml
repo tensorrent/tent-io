@@ -58,6 +58,33 @@ on:
         required: false
         default: "off"
         type: string
+      allow_baseline_change:
+        description: "Allow baseline profile change without failing baseline drift check."
+        required: false
+        default: false
+        type: boolean
+      regression_min_delta_final_test_acc:
+        description: "Fail when best final_test_acc delta vs previous is below this value."
+        required: false
+        default: "-0.01"
+        type: string
+      regression_min_delta_mmlu_test_acc:
+        description: "Fail when best MMLU delta vs previous is below this value."
+        required: false
+        default: "-0.01"
+        type: string
+      regression_min_delta_conversational_test_acc:
+        description: "Fail when best conversational delta vs previous is below this value."
+        required: false
+        default: "-0.02"
+        type: string
+      regression_max_delta_drift:
+        description: "Fail when best drift increases above this delta."
+        required: false
+        default: "0.0"
+        type: string
+  schedule:
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
@@ -69,6 +96,7 @@ concurrency:
 jobs:
   expansion-sweep:
     name: Run LLT expansion sweep
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -120,6 +148,10 @@ jobs:
 
           floor = parse_float("min_best_final_test_acc", "${{ inputs.min_best_final_test_acc }}")
           delta = parse_float("min_delta_vs_previous_best", "${{ inputs.min_delta_vs_previous_best }}", allow_empty=True)
+          reg_final = parse_float("regression_min_delta_final_test_acc", "${{ inputs.regression_min_delta_final_test_acc }}")
+          reg_mmlu = parse_float("regression_min_delta_mmlu_test_acc", "${{ inputs.regression_min_delta_mmlu_test_acc }}")
+          reg_conv = parse_float("regression_min_delta_conversational_test_acc", "${{ inputs.regression_min_delta_conversational_test_acc }}")
+          reg_drift = parse_float("regression_max_delta_drift", "${{ inputs.regression_max_delta_drift }}")
           keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
           top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
           window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
@@ -145,6 +177,10 @@ jobs:
                       "status": "ok",
                       "min_best_final_test_acc": floor,
                       "min_delta_vs_previous_best": delta,
+                      "regression_min_delta_final_test_acc": reg_final,
+                      "regression_min_delta_mmlu_test_acc": reg_mmlu,
+                      "regression_min_delta_conversational_test_acc": reg_conv,
+                      "regression_max_delta_drift": reg_drift,
                       "promotion_history_keep_last": keep_last,
                       "promotion_summary_top_k": top_k,
                       "promotion_summary_history_window": window,
@@ -216,6 +252,20 @@ jobs:
           out.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
           PY
 
+      - name: Snapshot previous sweep summary (expansion-sweep)
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          current = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+          out = Path("tent_io/harness/reports/expansion/llt_expansion_previous.current.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          if current.exists():
+              out.write_text(current.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              out.write_text(json.dumps({"status": "missing_previous_summary"}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Execute LLT expansion sweep
         run: |
           set +e
@@ -267,6 +317,28 @@ jobs:
               )
           print(json.dumps({"status": "ok", "floor": floor, "best_final_test_acc": best_acc}, indent=2))
           PY
+
+      - name: Enforce baseline immutability (expansion-sweep)
+        run: |
+          CMD=(
+            python3 tent_io/harness/tools/check_baseline_drift.py
+            --current "tent_io/harness/reports/expansion/llt_expansion_baseline_before_expansion.current.json"
+            --challenger "tent_io/harness/reports/expansion/llt_expansion_best.candidate.json"
+          )
+          if [[ "${{ inputs.allow_baseline_change }}" == "true" ]]; then
+            CMD+=(--allow-change)
+          fi
+          "${CMD[@]}"
+
+      - name: Regression delta gate (expansion-sweep)
+        run: |
+          python3 tent_io/harness/tools/check_regression.py \
+            --current "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --previous "tent_io/harness/reports/expansion/llt_expansion_previous.current.json" \
+            --min-delta-final-test-acc "${{ inputs.regression_min_delta_final_test_acc }}" \
+            --min-delta-mmlu-test-acc "${{ inputs.regression_min_delta_mmlu_test_acc }}" \
+            --min-delta-conversational-test-acc "${{ inputs.regression_min_delta_conversational_test_acc }}" \
+            --max-delta-drift "${{ inputs.regression_max_delta_drift }}"
 
       - name: Enforce optional delta-vs-previous guard
         if: ${{ inputs.min_delta_vs_previous_best != '' }}
@@ -481,6 +553,12 @@ jobs:
               f"- delta_vs_previous_best: `{delta_vs_previous}`",
               f"- delta_guard_passes: `{delta_guard_passes}`",
               f"- delta_guard_status: **{delta_status}** {delta_badge}",
+              "- regression_thresholds: "
+              f"`final=${{ inputs.regression_min_delta_final_test_acc }}, "
+              f"mmlu=${{ inputs.regression_min_delta_mmlu_test_acc }}, "
+              f"conv=${{ inputs.regression_min_delta_conversational_test_acc }}, "
+              f"drift=${{ inputs.regression_max_delta_drift }}`",
+              f"- allow_baseline_change: `${{ inputs.allow_baseline_change }}`",
               "",
               f"Artifacts: `{summary_path}`, `tent_io/harness/reports/expansion/llt_expansion_sweep.current.md`",
           ]
@@ -566,7 +644,7 @@ jobs:
 
   auto-all-compare:
     name: Run auto_all and compare baseline
-    if: ${{ inputs.run_auto_all_compare }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_auto_all_compare }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -618,6 +696,10 @@ jobs:
 
           floor = parse_float("min_best_final_test_acc", "${{ inputs.min_best_final_test_acc }}")
           delta = parse_float("min_delta_vs_previous_best", "${{ inputs.min_delta_vs_previous_best }}", allow_empty=True)
+          reg_final = parse_float("regression_min_delta_final_test_acc", "${{ inputs.regression_min_delta_final_test_acc }}")
+          reg_mmlu = parse_float("regression_min_delta_mmlu_test_acc", "${{ inputs.regression_min_delta_mmlu_test_acc }}")
+          reg_conv = parse_float("regression_min_delta_conversational_test_acc", "${{ inputs.regression_min_delta_conversational_test_acc }}")
+          reg_drift = parse_float("regression_max_delta_drift", "${{ inputs.regression_max_delta_drift }}")
           keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
           top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
           window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
@@ -640,6 +722,10 @@ jobs:
                       "status": "ok",
                       "min_best_final_test_acc": floor,
                       "min_delta_vs_previous_best": delta,
+                      "regression_min_delta_final_test_acc": reg_final,
+                      "regression_min_delta_mmlu_test_acc": reg_mmlu,
+                      "regression_min_delta_conversational_test_acc": reg_conv,
+                      "regression_max_delta_drift": reg_drift,
                       "promotion_history_keep_last": keep_last,
                       "promotion_summary_top_k": top_k,
                       "promotion_summary_history_window": window,
@@ -710,6 +796,20 @@ jobs:
           out.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
           PY
 
+      - name: Snapshot previous sweep summary (auto_all)
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          current = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
+          out = Path("tent_io/harness/reports/expansion/llt_expansion_previous.current.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          if current.exists():
+              out.write_text(current.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              out.write_text(json.dumps({"status": "missing_previous_summary"}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Execute LLT expansion sweep (auto_all)
         run: |
           set +e
@@ -761,6 +861,28 @@ jobs:
               )
           print(json.dumps({"status": "ok", "floor": floor, "best_final_test_acc": best_acc}, indent=2))
           PY
+
+      - name: Enforce baseline immutability (auto_all)
+        run: |
+          CMD=(
+            python3 tent_io/harness/tools/check_baseline_drift.py
+            --current "tent_io/harness/reports/expansion/llt_expansion_baseline_before.current.json"
+            --challenger "tent_io/harness/reports/expansion/llt_expansion_best.candidate.json"
+          )
+          if [[ "${{ inputs.allow_baseline_change }}" == "true" ]]; then
+            CMD+=(--allow-change)
+          fi
+          "${CMD[@]}"
+
+      - name: Regression delta gate (auto_all)
+        run: |
+          python3 tent_io/harness/tools/check_regression.py \
+            --current "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --previous "tent_io/harness/reports/expansion/llt_expansion_previous.current.json" \
+            --min-delta-final-test-acc "${{ inputs.regression_min_delta_final_test_acc }}" \
+            --min-delta-mmlu-test-acc "${{ inputs.regression_min_delta_mmlu_test_acc }}" \
+            --min-delta-conversational-test-acc "${{ inputs.regression_min_delta_conversational_test_acc }}" \
+            --max-delta-drift "${{ inputs.regression_max_delta_drift }}"
 
       - name: Enforce optional delta-vs-previous guard (auto_all)
         if: ${{ inputs.min_delta_vs_previous_best != '' }}
@@ -1105,5 +1227,101 @@ jobs:
             tent_io/harness/reports/expansion/llt_expansion_history.ndjson
             tent_io/harness/reports/expansion/llt_expansion_baseline_before.current.json
             tent_io/harness/reports/expansion/llt_expansion_baseline_change.current.json
+            tent_io/harness/reports/expansion/full_stage_pipeline.*.json
+          if-no-files-found: error
+
+  scheduled-auto-all-guard:
+    name: Scheduled auto_all baseline guard
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create legacy absolute-path compatibility symlink
+        run: |
+          sudo mkdir -p /Users/coo-koba42
+          if [[ -e /Users/coo-koba42/dev || -L /Users/coo-koba42/dev ]]; then
+            sudo rm -rf /Users/coo-koba42/dev
+          fi
+          sudo ln -s "$GITHUB_WORKSPACE" /Users/coo-koba42/dev
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy
+
+      - name: Resolve conservative split-gate profile
+        run: |
+          echo "RESOLVED_LLT_MIN_MMLU_TEST_ACC=0.205" >> "$GITHUB_ENV"
+          echo "RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC=0.130" >> "$GITHUB_ENV"
+          echo "RESOLVED_LLT_MIN_EVAL_MMLU_ACC=0.205" >> "$GITHUB_ENV"
+          echo "RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC=0.130" >> "$GITHUB_ENV"
+
+      - name: Snapshot baseline pointer and summary
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          base = Path("tent_io/harness/reports/expansion")
+          base.mkdir(parents=True, exist_ok=True)
+          pointer = base / "llt_expansion_best.current.json"
+          before_pointer = base / "llt_expansion_baseline_before.scheduled.current.json"
+          summary = base / "llt_expansion_sweep.current.json"
+          before_summary = base / "llt_expansion_previous.scheduled.current.json"
+          if pointer.exists():
+              before_pointer.write_text(pointer.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              before_pointer.write_text(json.dumps({"status": "missing_pointer"}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          if summary.exists():
+              before_summary.write_text(summary.read_text(encoding="utf-8"), encoding="utf-8")
+          else:
+              before_summary.write_text(json.dumps({"status": "missing_previous_summary"}, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Run scheduled auto_all adversarial sweep
+        run: |
+          python3 tent_io/harness/run_llt_expansion_sweep.py \
+            --profiles auto_all \
+            --rank-by mmlu_test_acc \
+            --query "scheduled adversarial baseline guard" \
+            --llt-min-mmlu-test-acc "${RESOLVED_LLT_MIN_MMLU_TEST_ACC}" \
+            --llt-min-conversational-test-acc "${RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC}" \
+            --llt-min-eval-mmlu-acc "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
+            --llt-min-eval-conversational-acc "${RESOLVED_LLT_MIN_EVAL_CONVERSATIONAL_ACC}" \
+            --best-pointer-out "tent_io/harness/reports/expansion/llt_expansion_best.candidate.scheduled.json"
+
+      - name: Enforce scheduled baseline immutability
+        run: |
+          python3 tent_io/harness/tools/check_baseline_drift.py \
+            --current "tent_io/harness/reports/expansion/llt_expansion_baseline_before.scheduled.current.json" \
+            --challenger "tent_io/harness/reports/expansion/llt_expansion_best.candidate.scheduled.json"
+
+      - name: Enforce scheduled regression deltas
+        run: |
+          python3 tent_io/harness/tools/check_regression.py \
+            --current "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --previous "tent_io/harness/reports/expansion/llt_expansion_previous.scheduled.current.json" \
+            --min-delta-final-test-acc -0.01 \
+            --min-delta-mmlu-test-acc -0.01 \
+            --min-delta-conversational-test-acc -0.02 \
+            --max-delta-drift 0.0
+
+      - name: Upload scheduled guard artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llt-expansion-scheduled-guard
+          path: |
+            tent_io/harness/reports/expansion/llt_expansion_sweep.current.json
+            tent_io/harness/reports/expansion/llt_expansion_sweep.current.md
+            tent_io/harness/reports/expansion/llt_expansion_best.candidate.scheduled.json
+            tent_io/harness/reports/expansion/llt_expansion_baseline_before.scheduled.current.json
+            tent_io/harness/reports/expansion/llt_expansion_previous.scheduled.current.json
             tent_io/harness/reports/expansion/full_stage_pipeline.*.json
           if-no-files-found: error
