@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def as_float(value: Any) -> float | None:
     try:
@@ -33,7 +35,7 @@ def main() -> int:
     parser.add_argument(
         "--summary",
         type=Path,
-        default=Path("/Users/coo-koba42/dev/tent_io/harness/reports/expansion/llt_expansion_sweep.current.json"),
+        default=REPO_ROOT / "tent_io" / "harness" / "reports" / "expansion" / "llt_expansion_sweep.current.json",
         help="Expansion sweep summary JSON path.",
     )
     parser.add_argument("--expected-profile", default="expand_s2", help="Expected best-profile name.")
