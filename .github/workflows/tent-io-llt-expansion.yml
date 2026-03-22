@@ -88,6 +88,21 @@ on:
         required: false
         default: "0.0"
         type: string
+      promotion_alignment_required_runs:
+        description: "Aligned internal/external winner runs required before promotion is allowed by decision policy."
+        required: false
+        default: "2"
+        type: string
+      promotion_min_internal_margin:
+        description: "Minimum internal rank metric margin (best-vs-second) for promotion readiness."
+        required: false
+        default: "0.0"
+        type: string
+      promotion_min_external_vote_margin:
+        description: "Minimum external winner vote margin for promotion readiness."
+        required: false
+        default: "0"
+        type: string
   schedule:
     - cron: "0 6 * * *"
 
@@ -157,6 +172,9 @@ jobs:
           reg_mmlu = parse_float("regression_min_delta_mmlu_test_acc", "${{ inputs.regression_min_delta_mmlu_test_acc }}")
           reg_conv = parse_float("regression_min_delta_conversational_test_acc", "${{ inputs.regression_min_delta_conversational_test_acc }}")
           reg_drift = parse_float("regression_max_delta_drift", "${{ inputs.regression_max_delta_drift }}")
+          align_runs = parse_int("promotion_alignment_required_runs", "${{ inputs.promotion_alignment_required_runs }}", min_value=1)
+          promotion_internal_margin = parse_float("promotion_min_internal_margin", "${{ inputs.promotion_min_internal_margin }}")
+          promotion_external_vote_margin = parse_int("promotion_min_external_vote_margin", "${{ inputs.promotion_min_external_vote_margin }}", min_value=0)
           keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
           top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
           window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
@@ -186,6 +204,9 @@ jobs:
                       "regression_min_delta_mmlu_test_acc": reg_mmlu,
                       "regression_min_delta_conversational_test_acc": reg_conv,
                       "regression_max_delta_drift": reg_drift,
+                      "promotion_alignment_required_runs": align_runs,
+                      "promotion_min_internal_margin": promotion_internal_margin,
+                      "promotion_min_external_vote_margin": promotion_external_vote_margin,
                       "promotion_history_keep_last": keep_last,
                       "promotion_summary_top_k": top_k,
                       "promotion_summary_history_window": window,
@@ -519,6 +540,18 @@ jobs:
             --previous "tent_io/harness/reports/expansion/external_eval_compare.previous.json" \
             --out "tent_io/harness/reports/expansion/external_eval_compare.current.json"
 
+      - name: Compute promotion decision state (non-blocking)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 tent_io/harness/tools/compute_promotion_decision.py \
+            --internal-summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --external-compare "tent_io/harness/reports/expansion/external_eval_compare.current.json" \
+            --out "tent_io/harness/reports/expansion/promotion_decision.current.json" \
+            --history-out "tent_io/harness/reports/expansion/promotion_decision.history.ndjson" \
+            --alignment-required-runs "${{ inputs.promotion_alignment_required_runs }}" \
+            --min-internal-margin "${{ inputs.promotion_min_internal_margin }}" \
+            --min-external-vote-margin "${{ inputs.promotion_min_external_vote_margin }}"
+
       - name: Baseline drift alarm (expansion-sweep)
         run: |
           python3 tent_io/harness/check_llt_baseline_alarm.py \
@@ -800,6 +833,40 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Write promotion decision summary snippet
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          decision_path = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          if not decision_path.exists():
+              raise SystemExit(f"Missing promotion decision artifact: {decision_path}")
+          payload = json.loads(decision_path.read_text(encoding="utf-8"))
+          lines = [
+              "### Promotion Decision (non-blocking)",
+              "",
+              f"- decision_state: `{payload.get('decision_state')}`",
+              f"- promotion_allowed: `{payload.get('promotion_allowed')}`",
+              f"- internal_winner: `{payload.get('internal_winner')}`",
+              f"- external_winner: `{payload.get('external_winner')}`",
+              f"- aligned: `{payload.get('aligned')}`",
+              f"- contested: `{payload.get('contested')}`",
+              f"- aligned_streak: `{payload.get('aligned_streak')}` / `{payload.get('alignment_required_runs')}`",
+              f"- internal_margin: `{payload.get('internal_margin')}` (min `{payload.get('min_internal_margin')}`)",
+              f"- external_vote_margin: `{payload.get('external_vote_margin')}` (min `{payload.get('min_external_vote_margin')}`)",
+              "",
+              f"Artifact: `{decision_path}`",
+          ]
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Upload expansion artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -820,6 +887,8 @@ jobs:
             tent_io/harness/reports/expansion/external_eval_pair_run.current.json
             tent_io/harness/reports/expansion/external_eval_compare.previous.json
             tent_io/harness/reports/expansion/external_eval_compare.current.json
+            tent_io/harness/reports/expansion/promotion_decision.current.json
+            tent_io/harness/reports/expansion/promotion_decision.history.ndjson
             tent_io/harness/reports/expansion/full_stage_pipeline.*.json
           if-no-files-found: error
 
@@ -881,6 +950,9 @@ jobs:
           reg_mmlu = parse_float("regression_min_delta_mmlu_test_acc", "${{ inputs.regression_min_delta_mmlu_test_acc }}")
           reg_conv = parse_float("regression_min_delta_conversational_test_acc", "${{ inputs.regression_min_delta_conversational_test_acc }}")
           reg_drift = parse_float("regression_max_delta_drift", "${{ inputs.regression_max_delta_drift }}")
+          align_runs = parse_int("promotion_alignment_required_runs", "${{ inputs.promotion_alignment_required_runs }}", min_value=1)
+          promotion_internal_margin = parse_float("promotion_min_internal_margin", "${{ inputs.promotion_min_internal_margin }}")
+          promotion_external_vote_margin = parse_int("promotion_min_external_vote_margin", "${{ inputs.promotion_min_external_vote_margin }}", min_value=0)
           keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
           top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
           window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
@@ -907,6 +979,9 @@ jobs:
                       "regression_min_delta_mmlu_test_acc": reg_mmlu,
                       "regression_min_delta_conversational_test_acc": reg_conv,
                       "regression_max_delta_drift": reg_drift,
+                      "promotion_alignment_required_runs": align_runs,
+                      "promotion_min_internal_margin": promotion_internal_margin,
+                      "promotion_min_external_vote_margin": promotion_external_vote_margin,
                       "promotion_history_keep_last": keep_last,
                       "promotion_summary_top_k": top_k,
                       "promotion_summary_history_window": window,
