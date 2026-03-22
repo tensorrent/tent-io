@@ -76,6 +76,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Create legacy absolute-path compatibility symlink
+        run: |
+          sudo mkdir -p /Users/coo-koba42
+          if [[ -e /Users/coo-koba42/dev || -L /Users/coo-koba42/dev ]]; then
+            sudo rm -rf /Users/coo-koba42/dev
+          fi
+          sudo ln -s "$GITHUB_WORKSPACE" /Users/coo-koba42/dev
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -549,6 +557,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Create legacy absolute-path compatibility symlink
+        run: |
+          sudo mkdir -p /Users/coo-koba42
+          if [[ -e /Users/coo-koba42/dev || -L /Users/coo-koba42/dev ]]; then
+            sudo rm -rf /Users/coo-koba42/dev
+          fi
+          sudo ln -s "$GITHUB_WORKSPACE" /Users/coo-koba42/dev
 
       - name: Setup Python
         uses: actions/setup-python@v5

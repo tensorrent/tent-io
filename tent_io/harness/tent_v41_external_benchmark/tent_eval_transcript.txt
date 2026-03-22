@@ -1,0 +1,21 @@
+TENT v4.1 External Benchmark — Transcript
+============================================================
+
+--- builtin-001 (correct=False) ---
+Q: What is the time complexity of binary search?
+Expected: B
+TENT raw: 
+Extracted: 
+
+--- builtin-002 (correct=False) ---
+Q: Which element has the highest electronegativity?
+Expected: C
+TENT raw: 
+Extracted: 
+
+--- builtin-003 (correct=False) ---
+Q: In quantum mechanics, the commutator [x, p] equals:
+Expected: B
+TENT raw: 
+Extracted: 
+

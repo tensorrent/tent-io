@@ -1,0 +1,29 @@
+[
+  {
+    "id": "builtin-001",
+    "category": "computer_science",
+    "question": "What is the time complexity of binary search?",
+    "options": ["A) O(n)", "B) O(log n)", "C) O(n²)", "D) O(1)"],
+    "expected_answer": "B",
+    "source": "builtin (Option 3 — minimum viable)",
+    "source_index": 0
+  },
+  {
+    "id": "builtin-002",
+    "category": "chemistry",
+    "question": "Which element has the highest electronegativity?",
+    "options": ["A) Oxygen", "B) Chlorine", "C) Fluorine", "D) Nitrogen"],
+    "expected_answer": "C",
+    "source": "builtin (Option 3)",
+    "source_index": 1
+  },
+  {
+    "id": "builtin-003",
+    "category": "physics",
+    "question": "In quantum mechanics, the commutator [x, p] equals:",
+    "options": ["A) 0", "B) iℏ", "C) -iℏ", "D) ℏ²"],
+    "expected_answer": "B",
+    "source": "builtin (Option 3)",
+    "source_index": 2
+  }
+]
