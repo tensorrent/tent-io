@@ -15,6 +15,8 @@ from typing import Any
 
 from sparseplug_sparsity import get_sparsity_target
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def _ram_bytes() -> int | None:
     try:
@@ -76,7 +78,7 @@ def main() -> int:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("/Users/coo-koba42/dev/tent_io/harness/reports/sparseplug_decision.current.json"),
+        default=REPO_ROOT / "tent_io" / "harness" / "reports" / "sparseplug_decision.current.json",
         help="Output decision path",
     )
     args = parser.parse_args()
