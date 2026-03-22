@@ -566,6 +566,17 @@ jobs:
             --out-md "tent_io/harness/reports/expansion/promotion_decision_trend.current.md" \
             --window 20
 
+      - name: Compute intelligence scoring (non-blocking)
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 tent_io/harness/tools/compute_intelligence_scoring.py \
+            --sweep-summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
+            --external-compare "tent_io/harness/reports/expansion/external_eval_compare.current.json" \
+            --promotion-decision "tent_io/harness/reports/expansion/promotion_decision.current.json" \
+            --promotion-trend "tent_io/harness/reports/expansion/promotion_decision_trend.current.json" \
+            --out-json "tent_io/harness/reports/expansion/intelligence_scoring.current.json" \
+            --out-md "tent_io/harness/reports/expansion/intelligence_scoring.current.md"
+
       - name: Write pre-alarm decision summary (always before hard gate)
         if: ${{ inputs.enable_external_eval }}
         run: |
@@ -577,6 +588,7 @@ jobs:
           external_path = Path("tent_io/harness/reports/expansion/external_eval_compare.current.json")
           decision_path = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
           trend_path = Path("tent_io/harness/reports/expansion/promotion_decision_trend.current.json")
+          scoring_path = Path("tent_io/harness/reports/expansion/intelligence_scoring.current.json")
           lines = [
               "### Pre-Alarm Decision Snapshot",
               "",
@@ -622,6 +634,19 @@ jobs:
               )
           else:
               lines.append("- decision_trend: `missing`")
+          if scoring_path.exists():
+              score = json.loads(scoring_path.read_text(encoding="utf-8"))
+              metrics = score.get("scores") if isinstance(score.get("scores"), dict) else {}
+              lines.extend(
+                  [
+                      f"- ml_intelligence_score: `{metrics.get('ml_intelligence_score')}`",
+                      f"- logic_chain_score: `{metrics.get('logic_chain_score')}`",
+                      f"- ai_intelligence_score: `{metrics.get('ai_intelligence_score')}`",
+                      f"- agi_readiness_score: `{metrics.get('agi_readiness_score')}`",
+                  ]
+              )
+          else:
+              lines.append("- intelligence_scoring: `missing`")
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary_path:
               with open(summary_path, "a", encoding="utf-8") as f:
@@ -976,6 +1001,40 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Write intelligence scoring summary snippet
+        if: ${{ inputs.enable_external_eval }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          score_path = Path("tent_io/harness/reports/expansion/intelligence_scoring.current.json")
+          if not score_path.exists():
+              raise SystemExit(f"Missing intelligence scoring artifact: {score_path}")
+          payload = json.loads(score_path.read_text(encoding="utf-8"))
+          scores = payload.get("scores") if isinstance(payload.get("scores"), dict) else {}
+          lines = [
+              "### Intelligence Scoring",
+              "",
+              f"- internal_profile: `{payload.get('internal_profile')}`",
+              f"- decision_state: `{payload.get('decision_state')}`",
+              f"- promotion_allowed: `{payload.get('promotion_allowed')}`",
+              f"- ml_intelligence_score: `{scores.get('ml_intelligence_score')}`",
+              f"- logic_chain_score: `{scores.get('logic_chain_score')}`",
+              f"- ai_intelligence_score: `{scores.get('ai_intelligence_score')}`",
+              f"- agi_readiness_score: `{scores.get('agi_readiness_score')}`",
+              "",
+              f"Artifact: `{score_path}`",
+              "Trend: `tent_io/harness/reports/expansion/intelligence_scoring.current.md`",
+          ]
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Upload expansion artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -1000,6 +1059,8 @@ jobs:
             tent_io/harness/reports/expansion/promotion_decision.history.ndjson
             tent_io/harness/reports/expansion/promotion_decision_trend.current.json
             tent_io/harness/reports/expansion/promotion_decision_trend.current.md
+            tent_io/harness/reports/expansion/intelligence_scoring.current.json
+            tent_io/harness/reports/expansion/intelligence_scoring.current.md
             tent_io/harness/reports/expansion/full_stage_pipeline.*.json
           if-no-files-found: error
 
