@@ -90,14 +90,24 @@ def main() -> int:
     if hard_block:
         advisory_state_base = "hold"
     else:
+        # "skipped" = no prior artifact or disabled check; treat as non-blocking for promote_candidate.
+        # "alarm" is already handled above as hard_block.
         statuses = [readiness_status, regression_status, regression_trend_status]
-        all_ok = all(s == "ok" for s in statuses)
+        okish = ("ok", "skipped")
+        all_ok = all(s in okish for s in statuses)
         if all_ok:
             advisory_state_base = "promote_candidate"
-            reasons.append("all_signals_ok")
+            skipped_only = [n for n, st in zip(
+                ("readiness", "regression", "regression_trend"),
+                statuses,
+            ) if st == "skipped"]
+            if skipped_only:
+                reasons.append(f"signals_ok_with_skipped:{','.join(skipped_only)}")
+            else:
+                reasons.append("all_signals_ok")
         else:
             advisory_state_base = "observe"
-            reasons.append("partial_signal_or_skipped")
+            reasons.append("partial_signal_or_missing")
 
     # Optional hysteresis: require streak for promote_candidate.
     promote_candidate_streak = 0

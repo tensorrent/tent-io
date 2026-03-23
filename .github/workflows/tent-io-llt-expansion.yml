@@ -81,7 +81,7 @@ on:
       intelligence_advisory_required_streak:
         description: "Required consecutive promote_candidate advisories before advisory_state is promote_candidate."
         required: false
-        default: "1"
+        default: "2"
         type: string
       regression_min_delta_final_test_acc:
         description: "Fail when best final_test_acc delta vs previous is below this value."
@@ -118,6 +118,91 @@ on:
         required: false
         default: "0"
         type: string
+      contested_external_tie_break:
+        description: "When true, allow optional contested_external_override when external margin+streak+drift gates pass (see compute_promotion_decision.py)."
+        required: false
+        default: false
+        type: boolean
+      contested_external_margin_threshold:
+        description: "Minimum |aggregate external s1−s2| for contested tie-break (default 0.02)."
+        required: false
+        default: "0.02"
+        type: string
+      contested_external_tie_break_streak:
+        description: "Consecutive contested runs with strong external margin for tie-break promotion (default 3)."
+        required: false
+        default: "3"
+        type: string
+      tie_break_adaptive_threshold:
+        description: "When true, tie-break uses max(static, p75 of recent contested tie_break_confidence) with clamps."
+        required: false
+        default: false
+        type: boolean
+      tie_break_use_effective_confidence:
+        description: "When true, tie-break metric uses confidence * stability_score."
+        required: false
+        default: false
+        type: boolean
+      tie_break_effective_confidence_threshold:
+        description: "Optional threshold for effective confidence; empty uses confidence threshold."
+        required: false
+        default: ""
+        type: string
+      tie_break_hysteresis_enable:
+        description: "When true, use high/low hysteresis thresholds for tie-break metric."
+        required: false
+        default: false
+        type: boolean
+      tie_break_hysteresis_high:
+        description: "Optional high threshold for hysteresis entry; empty uses active metric threshold."
+        required: false
+        default: ""
+        type: string
+      tie_break_hysteresis_low:
+        description: "Optional low threshold for hysteresis retention; empty uses high-0.05."
+        required: false
+        default: ""
+        type: string
+      tie_break_hysteresis_upward_only:
+        description: "When true, hysteresis entry from below requires upward crossing."
+        required: false
+        default: false
+        type: boolean
+      tie_break_stability_gate:
+        description: "When true, require trajectory stability gate before contested override."
+        required: false
+        default: false
+        type: boolean
+      tie_break_stability_require_upward_crossing:
+        description: "When true, stability gate requires upward crossing into promotable region."
+        required: false
+        default: false
+        type: boolean
+      tie_break_stability_max_abs_acceleration:
+        description: "Optional max abs acceleration for stability gate; empty disables."
+        required: false
+        default: ""
+        type: string
+      tie_break_stability_max_near_boundary_streak:
+        description: "Optional max near-boundary streak for stability gate; empty disables."
+        required: false
+        default: ""
+        type: string
+      tie_break_stability_near_epsilon:
+        description: "Near-boundary epsilon for stability diagnostics and gate."
+        required: false
+        default: "0.05"
+        type: string
+      tie_break_stability_history_tail:
+        description: "Contested history tail length for stability gate."
+        required: false
+        default: "64"
+        type: string
+      tie_break_oscillation_amplitude_band:
+        description: "Amplitude band to distinguish boundary oscillation from large-swing instability."
+        required: false
+        default: "0.2"
+        type: string
       enforce_intelligence_readiness:
         description: "When true, fail run if intelligence readiness checks fail."
         required: false
@@ -152,6 +237,11 @@ on:
         description: "Optional comma list of allowed decision states; empty disables."
         required: false
         default: ""
+        type: string
+      intelligence_scoring_preset:
+        description: "Intelligence scoring weight preset: default or conversation_focused."
+        required: false
+        default: "default"
         type: string
       enforce_intelligence_regression:
         description: "When true, fail run if intelligence score deltas regress beyond configured thresholds."
@@ -298,6 +388,9 @@ jobs:
           split_gate_profile = "${{ inputs.split_gate_profile }}"
           if split_gate_profile not in {"off", "strict_split_profile_v1", "strict_split_profile_v1_conservative"}:
               raise SystemExit(f"Invalid split_gate_profile: {split_gate_profile!r}")
+          scoring_preset = "${{ inputs.intelligence_scoring_preset }}"
+          if scoring_preset not in {"default", "conversation_focused"}:
+              raise SystemExit(f"Invalid intelligence_scoring_preset: {scoring_preset!r}")
           rank_by = "${{ inputs.expansion_rank_by }}"
           if rank_by not in {"final_test_acc", "mmlu_test_acc", "conversational_logic_test_acc"}:
               raise SystemExit(f"Invalid expansion_rank_by: {rank_by!r}")
@@ -345,6 +438,7 @@ jobs:
                       "promotion_summary_history_window": window,
                       "promotion_summary_sort_by": sort_by,
                       "split_gate_profile": split_gate_profile,
+                      "intelligence_scoring_preset": scoring_preset,
                       "expansion_rank_by": rank_by,
                       "profiles": profiles_raw,
                       "query": query,
@@ -676,6 +770,50 @@ jobs:
       - name: Compute promotion decision state (non-blocking)
         if: ${{ inputs.enable_external_eval }}
         run: |
+          TIE_FLAG=""
+          if [ "${{ inputs.contested_external_tie_break }}" = "true" ]; then
+            TIE_FLAG="--contested-external-tie-break"
+          fi
+          ADAPT_FLAG=""
+          if [ "${{ inputs.tie_break_adaptive_threshold }}" = "true" ]; then
+            ADAPT_FLAG="--tie-break-adaptive-threshold"
+          fi
+          EFF_FLAG=""
+          if [ "${{ inputs.tie_break_use_effective_confidence }}" = "true" ]; then
+            EFF_FLAG="--tie-break-use-effective-confidence"
+          fi
+          HYS_FLAG=""
+          if [ "${{ inputs.tie_break_hysteresis_enable }}" = "true" ]; then
+            HYS_FLAG="--tie-break-hysteresis-enable"
+          fi
+          HYS_UP_FLAG=""
+          if [ "${{ inputs.tie_break_hysteresis_upward_only }}" = "true" ]; then
+            HYS_UP_FLAG="--tie-break-hysteresis-upward-only"
+          fi
+          STAB_FLAG=""
+          if [ "${{ inputs.tie_break_stability_gate }}" = "true" ]; then
+            STAB_FLAG="--tie-break-stability-gate"
+          fi
+          STAB_UP_FLAG=""
+          if [ "${{ inputs.tie_break_stability_require_upward_crossing }}" = "true" ]; then
+            STAB_UP_FLAG="--tie-break-stability-require-upward-crossing"
+          fi
+          EXTRA_ARGS=()
+          if [[ "${{ inputs.tie_break_effective_confidence_threshold }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-effective-confidence-threshold "${{ inputs.tie_break_effective_confidence_threshold }}")
+          fi
+          if [[ "${{ inputs.tie_break_hysteresis_high }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-hysteresis-high "${{ inputs.tie_break_hysteresis_high }}")
+          fi
+          if [[ "${{ inputs.tie_break_hysteresis_low }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-hysteresis-low "${{ inputs.tie_break_hysteresis_low }}")
+          fi
+          if [[ "${{ inputs.tie_break_stability_max_abs_acceleration }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-stability-max-abs-acceleration "${{ inputs.tie_break_stability_max_abs_acceleration }}")
+          fi
+          if [[ "${{ inputs.tie_break_stability_max_near_boundary_streak }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-stability-max-near-boundary-streak "${{ inputs.tie_break_stability_max_near_boundary_streak }}")
+          fi
           python3 tent_io/harness/tools/compute_promotion_decision.py \
             --internal-summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
             --external-compare "tent_io/harness/reports/expansion/external_eval_compare.current.json" \
@@ -683,7 +821,17 @@ jobs:
             --history-out "tent_io/harness/reports/expansion/promotion_decision.history.ndjson" \
             --alignment-required-runs "${{ inputs.promotion_alignment_required_runs }}" \
             --min-internal-margin "${{ inputs.promotion_min_internal_margin }}" \
-            --min-external-vote-margin "${{ inputs.promotion_min_external_vote_margin }}"
+            --min-external-vote-margin "${{ inputs.promotion_min_external_vote_margin }}" \
+            --external-margin-threshold "${{ inputs.contested_external_margin_threshold }}" \
+            --external-tie-break-streak-required "${{ inputs.contested_external_tie_break_streak }}" \
+            --tie-break-margin-floor "0.01" \
+            --tie-break-agreement-floor "0.6" \
+            --tie-break-confidence-threshold "0.75" \
+            --tie-break-target-margin "0.03" \
+            --tie-break-stability-near-epsilon "${{ inputs.tie_break_stability_near_epsilon }}" \
+            --tie-break-stability-history-tail "${{ inputs.tie_break_stability_history_tail }}" \
+            --tie-break-oscillation-amplitude-band "${{ inputs.tie_break_oscillation_amplitude_band }}" \
+            ${TIE_FLAG} ${ADAPT_FLAG} ${EFF_FLAG} ${HYS_FLAG} ${HYS_UP_FLAG} ${STAB_FLAG} ${STAB_UP_FLAG} "${EXTRA_ARGS[@]}"
 
       - name: Summarize promotion decision trend (non-blocking)
         if: ${{ inputs.enable_external_eval }}
@@ -721,6 +869,7 @@ jobs:
             --external-compare "tent_io/harness/reports/expansion/external_eval_compare.current.json" \
             --promotion-decision "tent_io/harness/reports/expansion/promotion_decision.current.json" \
             --promotion-trend "tent_io/harness/reports/expansion/promotion_decision_trend.current.json" \
+            --scoring-preset "${{ inputs.intelligence_scoring_preset }}" \
             --out-json "tent_io/harness/reports/expansion/intelligence_scoring.current.json" \
             --out-md "tent_io/harness/reports/expansion/intelligence_scoring.current.md"
 
@@ -1537,6 +1686,9 @@ jobs:
           split_gate_profile = "${{ inputs.split_gate_profile }}"
           if split_gate_profile not in {"off", "strict_split_profile_v1", "strict_split_profile_v1_conservative"}:
               raise SystemExit(f"Invalid split_gate_profile: {split_gate_profile!r}")
+          scoring_preset = "${{ inputs.intelligence_scoring_preset }}"
+          if scoring_preset not in {"default", "conversation_focused"}:
+              raise SystemExit(f"Invalid intelligence_scoring_preset: {scoring_preset!r}")
           rank_by = "${{ inputs.expansion_rank_by }}"
           if rank_by not in {"final_test_acc", "mmlu_test_acc", "conversational_logic_test_acc"}:
               raise SystemExit(f"Invalid expansion_rank_by: {rank_by!r}")
@@ -1581,6 +1733,7 @@ jobs:
                       "promotion_summary_history_window": window,
                       "promotion_summary_sort_by": sort_by,
                       "split_gate_profile": split_gate_profile,
+                      "intelligence_scoring_preset": scoring_preset,
                       "expansion_rank_by": rank_by,
                       "query": query,
                   },
