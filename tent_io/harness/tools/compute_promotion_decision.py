@@ -549,6 +549,8 @@ def main() -> None:
         "meets_external_margin": ext_vote_margin >= args.min_external_vote_margin,
         "external_margin_signed": margin_signed,
         "external_margin_abs": margin_abs,
+        "external_aggregate_s1": _s1a,
+        "external_aggregate_s2": _s2a,
         "external_metric_agreement_ratio": agreement_ratio,
         "tie_break_momentum": tb_momentum,
         "external_tie_break_streak": tb_streak,

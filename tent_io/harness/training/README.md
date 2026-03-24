@@ -2,6 +2,8 @@
 
 This folder bootstraps local training/evaluation loops for Phase-1 intelligence work.
 
+**How this connects to governance and benchmarks:** see `tent_io/docs/INTELLIGENCE_TEACHING_AND_TRAINING.md` (data → train → intelligence scoring → ODIN/TENT/GSM8K snapshot).
+
 ## 1) Prepare normalized corpora
 
 ```bash

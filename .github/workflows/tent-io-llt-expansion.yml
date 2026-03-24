@@ -53,6 +53,21 @@ on:
         required: false
         default: ""
         type: string
+      trend_window:
+        description: "Rolling decision trend short window size."
+        required: false
+        default: "5"
+        type: string
+      trend_window_long:
+        description: "Rolling decision trend long window size."
+        required: false
+        default: "20"
+        type: string
+      leaderboard_window:
+        description: "Number of recent runs to show in leaderboard."
+        required: false
+        default: "10"
+        type: string
       split_gate_profile:
         description: "Split-gate preset: off, strict_split_profile_v1, or strict_split_profile_v1_conservative."
         required: false
@@ -293,6 +308,11 @@ on:
         required: false
         default: ""
         type: string
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "tent_io/**"
+      - ".github/workflows/tent-io-llt-expansion.yml"
   schedule:
     - cron: "0 6 * * *"
 
@@ -306,9 +326,13 @@ concurrency:
 jobs:
   expansion-sweep:
     name: Run LLT expansion sweep
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write
+      actions: write
 
     steps:
       - name: Checkout
@@ -322,6 +346,13 @@ jobs:
           fi
           sudo ln -s "$GITHUB_WORKSPACE" /Users/coo-koba42/dev
 
+      - name: Restore promotion proposal history (PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/cache@v4
+        with:
+          path: promotion_proposal.history
+          key: promo-proposal-pr-${{ github.event.pull_request.number }}
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -331,6 +362,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install numpy
+
+      - name: Resolve workflow inputs (dispatch vs pull_request)
+        run: python3 tent_io/harness/scripts/resolve_workflow_dispatch_inputs.py
 
       - name: Validate workflow numeric inputs
         run: |
@@ -356,48 +390,48 @@ jobs:
                   raise SystemExit(f"Invalid {name}: {value} < {min_value}")
               return value
 
-          floor = parse_float("min_best_final_test_acc", "${{ inputs.min_best_final_test_acc }}")
-          delta = parse_float("min_delta_vs_previous_best", "${{ inputs.min_delta_vs_previous_best }}", allow_empty=True)
-          reg_final = parse_float("regression_min_delta_final_test_acc", "${{ inputs.regression_min_delta_final_test_acc }}")
-          reg_mmlu = parse_float("regression_min_delta_mmlu_test_acc", "${{ inputs.regression_min_delta_mmlu_test_acc }}")
-          reg_conv = parse_float("regression_min_delta_conversational_test_acc", "${{ inputs.regression_min_delta_conversational_test_acc }}")
-          reg_drift = parse_float("regression_max_delta_drift", "${{ inputs.regression_max_delta_drift }}")
-          align_runs = parse_int("promotion_alignment_required_runs", "${{ inputs.promotion_alignment_required_runs }}", min_value=1)
-          promotion_internal_margin = parse_float("promotion_min_internal_margin", "${{ inputs.promotion_min_internal_margin }}")
-          promotion_external_vote_margin = parse_int("promotion_min_external_vote_margin", "${{ inputs.promotion_min_external_vote_margin }}", min_value=0)
-          intel_ml = parse_float("intelligence_min_ml_score", "${{ inputs.intelligence_min_ml_score }}", allow_empty=True)
-          intel_logic = parse_float("intelligence_min_logic_chain_score", "${{ inputs.intelligence_min_logic_chain_score }}", allow_empty=True)
-          intel_ai = parse_float("intelligence_min_ai_score", "${{ inputs.intelligence_min_ai_score }}", allow_empty=True)
-          intel_agi = parse_float("intelligence_min_agi_readiness_score", "${{ inputs.intelligence_min_agi_readiness_score }}", allow_empty=True)
-          intel_contested = parse_float("intelligence_max_contested_ratio", "${{ inputs.intelligence_max_contested_ratio }}", allow_empty=True)
-          intel_d_ml = parse_float("intelligence_min_delta_ml_score", "${{ inputs.intelligence_min_delta_ml_score }}", allow_empty=True)
-          intel_d_logic = parse_float("intelligence_min_delta_logic_chain_score", "${{ inputs.intelligence_min_delta_logic_chain_score }}", allow_empty=True)
-          intel_d_ai = parse_float("intelligence_min_delta_ai_score", "${{ inputs.intelligence_min_delta_ai_score }}", allow_empty=True)
-          intel_d_agi = parse_float("intelligence_min_delta_agi_readiness_score", "${{ inputs.intelligence_min_delta_agi_readiness_score }}", allow_empty=True)
-          intel_d_contested = parse_float("intelligence_max_delta_contested_ratio", "${{ inputs.intelligence_max_delta_contested_ratio }}", allow_empty=True)
-          intel_t_window = parse_int("intelligence_regression_trend_window", "${{ inputs.intelligence_regression_trend_window }}", min_value=1)
-          intel_t_alarm_ratio = parse_float("intelligence_regression_max_alarm_ratio", "${{ inputs.intelligence_regression_max_alarm_ratio }}", allow_empty=True)
-          intel_t_consecutive = parse_int("intelligence_regression_max_consecutive_alarms", "${{ inputs.intelligence_regression_max_consecutive_alarms }}", allow_empty=True, min_value=0)
-          intel_adv_streak = parse_int("intelligence_advisory_required_streak", "${{ inputs.intelligence_advisory_required_streak }}", min_value=1)
-          keep_last = parse_int("promotion_history_keep_last", "${{ inputs.promotion_history_keep_last }}", allow_empty=True, min_value=1)
-          top_k = parse_int("promotion_summary_top_k", "${{ inputs.promotion_summary_top_k }}", min_value=1)
-          window = parse_int("promotion_summary_history_window", "${{ inputs.promotion_summary_history_window }}", allow_empty=True, min_value=0)
-          sort_by = "${{ inputs.promotion_summary_sort_by }}"
+          floor = parse_float("min_best_final_test_acc", "${{ env.INPUTS_MIN_BEST_FINAL_TEST_ACC }}")
+          delta = parse_float("min_delta_vs_previous_best", "${{ env.INPUTS_MIN_DELTA_VS_PREVIOUS_BEST }}", allow_empty=True)
+          reg_final = parse_float("regression_min_delta_final_test_acc", "${{ env.INPUTS_REGRESSION_MIN_DELTA_FINAL_TEST_ACC }}")
+          reg_mmlu = parse_float("regression_min_delta_mmlu_test_acc", "${{ env.INPUTS_REGRESSION_MIN_DELTA_MMLU_TEST_ACC }}")
+          reg_conv = parse_float("regression_min_delta_conversational_test_acc", "${{ env.INPUTS_REGRESSION_MIN_DELTA_CONVERSATIONAL_TEST_ACC }}")
+          reg_drift = parse_float("regression_max_delta_drift", "${{ env.INPUTS_REGRESSION_MAX_DELTA_DRIFT }}")
+          align_runs = parse_int("promotion_alignment_required_runs", "${{ env.INPUTS_PROMOTION_ALIGNMENT_REQUIRED_RUNS }}", min_value=1)
+          promotion_internal_margin = parse_float("promotion_min_internal_margin", "${{ env.INPUTS_PROMOTION_MIN_INTERNAL_MARGIN }}")
+          promotion_external_vote_margin = parse_int("promotion_min_external_vote_margin", "${{ env.INPUTS_PROMOTION_MIN_EXTERNAL_VOTE_MARGIN }}", min_value=0)
+          intel_ml = parse_float("intelligence_min_ml_score", "${{ env.INPUTS_INTELLIGENCE_MIN_ML_SCORE }}", allow_empty=True)
+          intel_logic = parse_float("intelligence_min_logic_chain_score", "${{ env.INPUTS_INTELLIGENCE_MIN_LOGIC_CHAIN_SCORE }}", allow_empty=True)
+          intel_ai = parse_float("intelligence_min_ai_score", "${{ env.INPUTS_INTELLIGENCE_MIN_AI_SCORE }}", allow_empty=True)
+          intel_agi = parse_float("intelligence_min_agi_readiness_score", "${{ env.INPUTS_INTELLIGENCE_MIN_AGI_READINESS_SCORE }}", allow_empty=True)
+          intel_contested = parse_float("intelligence_max_contested_ratio", "${{ env.INPUTS_INTELLIGENCE_MAX_CONTESTED_RATIO }}", allow_empty=True)
+          intel_d_ml = parse_float("intelligence_min_delta_ml_score", "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_ML_SCORE }}", allow_empty=True)
+          intel_d_logic = parse_float("intelligence_min_delta_logic_chain_score", "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_LOGIC_CHAIN_SCORE }}", allow_empty=True)
+          intel_d_ai = parse_float("intelligence_min_delta_ai_score", "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_AI_SCORE }}", allow_empty=True)
+          intel_d_agi = parse_float("intelligence_min_delta_agi_readiness_score", "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_AGI_READINESS_SCORE }}", allow_empty=True)
+          intel_d_contested = parse_float("intelligence_max_delta_contested_ratio", "${{ env.INPUTS_INTELLIGENCE_MAX_DELTA_CONTESTED_RATIO }}", allow_empty=True)
+          intel_t_window = parse_int("intelligence_regression_trend_window", "${{ env.INPUTS_INTELLIGENCE_REGRESSION_TREND_WINDOW }}", min_value=1)
+          intel_t_alarm_ratio = parse_float("intelligence_regression_max_alarm_ratio", "${{ env.INPUTS_INTELLIGENCE_REGRESSION_MAX_ALARM_RATIO }}", allow_empty=True)
+          intel_t_consecutive = parse_int("intelligence_regression_max_consecutive_alarms", "${{ env.INPUTS_INTELLIGENCE_REGRESSION_MAX_CONSECUTIVE_ALARMS }}", allow_empty=True, min_value=0)
+          intel_adv_streak = parse_int("intelligence_advisory_required_streak", "${{ env.INPUTS_INTELLIGENCE_ADVISORY_REQUIRED_STREAK }}", min_value=1)
+          keep_last = parse_int("promotion_history_keep_last", "${{ env.INPUTS_PROMOTION_HISTORY_KEEP_LAST }}", allow_empty=True, min_value=1)
+          top_k = parse_int("promotion_summary_top_k", "${{ env.INPUTS_PROMOTION_SUMMARY_TOP_K }}", min_value=1)
+          window = parse_int("promotion_summary_history_window", "${{ env.INPUTS_PROMOTION_SUMMARY_HISTORY_WINDOW }}", allow_empty=True, min_value=0)
+          sort_by = "${{ env.INPUTS_PROMOTION_SUMMARY_SORT_BY }}"
           if sort_by not in {"promotions", "avg_final_test_acc", "last_promoted_utc"}:
               raise SystemExit(f"Invalid promotion_summary_sort_by: {sort_by!r}")
-          split_gate_profile = "${{ inputs.split_gate_profile }}"
+          split_gate_profile = "${{ env.INPUTS_SPLIT_GATE_PROFILE }}"
           if split_gate_profile not in {"off", "strict_split_profile_v1", "strict_split_profile_v1_conservative"}:
               raise SystemExit(f"Invalid split_gate_profile: {split_gate_profile!r}")
-          scoring_preset = "${{ inputs.intelligence_scoring_preset }}"
+          scoring_preset = "${{ env.INPUTS_INTELLIGENCE_SCORING_PRESET }}"
           if scoring_preset not in {"default", "conversation_focused"}:
               raise SystemExit(f"Invalid intelligence_scoring_preset: {scoring_preset!r}")
-          rank_by = "${{ inputs.expansion_rank_by }}"
+          rank_by = "${{ env.INPUTS_EXPANSION_RANK_BY }}"
           if rank_by not in {"final_test_acc", "mmlu_test_acc", "conversational_logic_test_acc"}:
               raise SystemExit(f"Invalid expansion_rank_by: {rank_by!r}")
-          profiles_raw = "${{ inputs.profiles }}".strip()
+          profiles_raw = "${{ env.INPUTS_PROFILES }}".strip()
           if profiles_raw == "":
               raise SystemExit("Invalid profiles: empty input.")
-          query = "${{ inputs.query }}".strip()
+          query = "${{ env.INPUTS_QUERY }}".strip()
           if query == "":
               raise SystemExit("Invalid query: empty input.")
 
@@ -428,11 +462,11 @@ jobs:
                       "intelligence_regression_max_alarm_ratio": intel_t_alarm_ratio,
                       "intelligence_regression_max_consecutive_alarms": intel_t_consecutive,
                       "intelligence_advisory_required_streak": intel_adv_streak,
-                      "intelligence_allowed_decision_states": "${{ inputs.intelligence_allowed_decision_states }}",
-                      "enforce_intelligence_readiness": "${{ inputs.enforce_intelligence_readiness }}",
-                      "enforce_intelligence_regression": "${{ inputs.enforce_intelligence_regression }}",
-                      "enforce_intelligence_regression_trend": "${{ inputs.enforce_intelligence_regression_trend }}",
-                      "enforce_intelligence_promotion_advisory": "${{ inputs.enforce_intelligence_promotion_advisory }}",
+                      "intelligence_allowed_decision_states": "${{ env.INPUTS_INTELLIGENCE_ALLOWED_DECISION_STATES }}",
+                      "enforce_intelligence_readiness": "${{ env.INPUTS_ENFORCE_INTELLIGENCE_READINESS }}",
+                      "enforce_intelligence_regression": "${{ env.INPUTS_ENFORCE_INTELLIGENCE_REGRESSION }}",
+                      "enforce_intelligence_regression_trend": "${{ env.INPUTS_ENFORCE_INTELLIGENCE_REGRESSION_TREND }}",
+                      "enforce_intelligence_promotion_advisory": "${{ env.INPUTS_ENFORCE_INTELLIGENCE_PROMOTION_ADVISORY }}",
                       "promotion_history_keep_last": keep_last,
                       "promotion_summary_top_k": top_k,
                       "promotion_summary_history_window": window,
@@ -453,14 +487,14 @@ jobs:
         run: |
           mkdir -p tent_io/harness/reports/expansion
           python3 tent_io/harness/run_llt_expansion_sweep.py \
-            --profiles "${{ inputs.profiles }}" \
-            --rank-by "${{ inputs.expansion_rank_by }}" \
+            --profiles "${{ env.INPUTS_PROFILES }}" \
+            --rank-by "${{ env.INPUTS_EXPANSION_RANK_BY }}" \
             --validate-only \
             > tent_io/harness/reports/expansion/llt_expansion_profiles_resolved.expansion_sweep.current.json
 
       - name: Resolve split-gate profile (expansion-sweep)
         run: |
-          profile="${{ inputs.split_gate_profile }}"
+          profile="${{ env.INPUTS_SPLIT_GATE_PROFILE }}"
           case "$profile" in
             off)
               echo "RESOLVED_LLT_MIN_MMLU_TEST_ACC=-1" >> "$GITHUB_ENV"
@@ -523,9 +557,9 @@ jobs:
         run: |
           set +e
           python3 tent_io/harness/run_llt_expansion_sweep.py \
-            --profiles "${{ inputs.profiles }}" \
-            --rank-by "${{ inputs.expansion_rank_by }}" \
-            --query "${{ inputs.query }}" \
+            --profiles "${{ env.INPUTS_PROFILES }}" \
+            --rank-by "${{ env.INPUTS_EXPANSION_RANK_BY }}" \
+            --query "${{ env.INPUTS_QUERY }}" \
             --llt-min-mmlu-test-acc "${RESOLVED_LLT_MIN_MMLU_TEST_ACC}" \
             --llt-min-conversational-test-acc "${RESOLVED_LLT_MIN_CONVERSATIONAL_TEST_ACC}" \
             --llt-min-eval-mmlu-acc "${RESOLVED_LLT_MIN_EVAL_MMLU_ACC}" \
@@ -553,7 +587,7 @@ jobs:
           import json
           from pathlib import Path
 
-          floor = float("${{ inputs.min_best_final_test_acc }}")
+          floor = float("${{ env.INPUTS_MIN_BEST_FINAL_TEST_ACC }}")
           summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
           if not summary_path.exists():
               raise SystemExit(f"Missing sweep summary: {summary_path}")
@@ -578,7 +612,7 @@ jobs:
             --current "tent_io/harness/reports/expansion/llt_expansion_baseline_before_expansion.current.json"
             --challenger "tent_io/harness/reports/expansion/llt_expansion_best.candidate.json"
           )
-          if [[ "${{ inputs.allow_baseline_change }}" == "true" ]]; then
+          if [[ "${{ env.INPUTS_ALLOW_BASELINE_CHANGE }}" == "true" ]]; then
             CMD+=(--allow-change)
           fi
           "${CMD[@]}"
@@ -588,19 +622,19 @@ jobs:
           python3 tent_io/harness/tools/check_regression.py \
             --current "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
             --previous "tent_io/harness/reports/expansion/llt_expansion_previous.current.json" \
-            --min-delta-final-test-acc "${{ inputs.regression_min_delta_final_test_acc }}" \
-            --min-delta-mmlu-test-acc "${{ inputs.regression_min_delta_mmlu_test_acc }}" \
-            --min-delta-conversational-test-acc "${{ inputs.regression_min_delta_conversational_test_acc }}" \
-            --max-delta-drift "${{ inputs.regression_max_delta_drift }}"
+            --min-delta-final-test-acc "${{ env.INPUTS_REGRESSION_MIN_DELTA_FINAL_TEST_ACC }}" \
+            --min-delta-mmlu-test-acc "${{ env.INPUTS_REGRESSION_MIN_DELTA_MMLU_TEST_ACC }}" \
+            --min-delta-conversational-test-acc "${{ env.INPUTS_REGRESSION_MIN_DELTA_CONVERSATIONAL_TEST_ACC }}" \
+            --max-delta-drift "${{ env.INPUTS_REGRESSION_MAX_DELTA_DRIFT }}"
 
       - name: Enforce optional delta-vs-previous guard
-        if: ${{ inputs.min_delta_vs_previous_best != '' }}
+        if: ${{ env.INPUTS_MIN_DELTA_VS_PREVIOUS_BEST != '' }}
         run: |
           python3 - <<'PY'
           import json
           from pathlib import Path
 
-          min_delta = float("${{ inputs.min_delta_vs_previous_best }}")
+          min_delta = float("${{ env.INPUTS_MIN_DELTA_VS_PREVIOUS_BEST }}")
           before_path = Path("tent_io/harness/reports/expansion/llt_expansion_baseline_before_expansion.current.json")
           summary_path = Path("tent_io/harness/reports/expansion/llt_expansion_sweep.current.json")
 
@@ -636,7 +670,7 @@ jobs:
           PY
 
       - name: Snapshot previous external compare (expansion-sweep)
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 - <<'PY'
           import json
@@ -654,9 +688,9 @@ jobs:
           PY
 
       - name: Run external eval for expand_s1 and expand_s2 (expansion-sweep)
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
-          export EXTERNAL_EVAL_RANK_BY="${{ inputs.expansion_rank_by }}"
+          export EXTERNAL_EVAL_RANK_BY="${{ env.INPUTS_EXPANSION_RANK_BY }}"
           python3 - <<'PY'
           import json
           import os
@@ -759,7 +793,7 @@ jobs:
           PY
 
       - name: Compare external eval pair (non-blocking)
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 tent_io/harness/tools/check_external_regression.py \
             --s1 "tent_io/harness/reports/expansion/external_eval.expand_s1.current.json" \
@@ -768,73 +802,867 @@ jobs:
             --out "tent_io/harness/reports/expansion/external_eval_compare.current.json"
 
       - name: Compute promotion decision state (non-blocking)
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           TIE_FLAG=""
-          if [ "${{ inputs.contested_external_tie_break }}" = "true" ]; then
+          if [ "${{ env.INPUTS_CONTESTED_EXTERNAL_TIE_BREAK }}" = "true" ]; then
             TIE_FLAG="--contested-external-tie-break"
           fi
           ADAPT_FLAG=""
-          if [ "${{ inputs.tie_break_adaptive_threshold }}" = "true" ]; then
+          if [ "${{ env.INPUTS_TIE_BREAK_ADAPTIVE_THRESHOLD }}" = "true" ]; then
             ADAPT_FLAG="--tie-break-adaptive-threshold"
           fi
           EFF_FLAG=""
-          if [ "${{ inputs.tie_break_use_effective_confidence }}" = "true" ]; then
+          if [ "${{ env.INPUTS_TIE_BREAK_USE_EFFECTIVE_CONFIDENCE }}" = "true" ]; then
             EFF_FLAG="--tie-break-use-effective-confidence"
           fi
           HYS_FLAG=""
-          if [ "${{ inputs.tie_break_hysteresis_enable }}" = "true" ]; then
+          if [ "${{ env.INPUTS_TIE_BREAK_HYSTERESIS_ENABLE }}" = "true" ]; then
             HYS_FLAG="--tie-break-hysteresis-enable"
           fi
           HYS_UP_FLAG=""
-          if [ "${{ inputs.tie_break_hysteresis_upward_only }}" = "true" ]; then
+          if [ "${{ env.INPUTS_TIE_BREAK_HYSTERESIS_UPWARD_ONLY }}" = "true" ]; then
             HYS_UP_FLAG="--tie-break-hysteresis-upward-only"
           fi
           STAB_FLAG=""
-          if [ "${{ inputs.tie_break_stability_gate }}" = "true" ]; then
+          if [ "${{ env.INPUTS_TIE_BREAK_STABILITY_GATE }}" = "true" ]; then
             STAB_FLAG="--tie-break-stability-gate"
           fi
           STAB_UP_FLAG=""
-          if [ "${{ inputs.tie_break_stability_require_upward_crossing }}" = "true" ]; then
+          if [ "${{ env.INPUTS_TIE_BREAK_STABILITY_REQUIRE_UPWARD_CROSSING }}" = "true" ]; then
             STAB_UP_FLAG="--tie-break-stability-require-upward-crossing"
           fi
           EXTRA_ARGS=()
-          if [[ "${{ inputs.tie_break_effective_confidence_threshold }}" != "" ]]; then
-            EXTRA_ARGS+=(--tie-break-effective-confidence-threshold "${{ inputs.tie_break_effective_confidence_threshold }}")
+          if [[ "${{ env.INPUTS_TIE_BREAK_EFFECTIVE_CONFIDENCE_THRESHOLD }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-effective-confidence-threshold "${{ env.INPUTS_TIE_BREAK_EFFECTIVE_CONFIDENCE_THRESHOLD }}")
           fi
-          if [[ "${{ inputs.tie_break_hysteresis_high }}" != "" ]]; then
-            EXTRA_ARGS+=(--tie-break-hysteresis-high "${{ inputs.tie_break_hysteresis_high }}")
+          if [[ "${{ env.INPUTS_TIE_BREAK_HYSTERESIS_HIGH }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-hysteresis-high "${{ env.INPUTS_TIE_BREAK_HYSTERESIS_HIGH }}")
           fi
-          if [[ "${{ inputs.tie_break_hysteresis_low }}" != "" ]]; then
-            EXTRA_ARGS+=(--tie-break-hysteresis-low "${{ inputs.tie_break_hysteresis_low }}")
+          if [[ "${{ env.INPUTS_TIE_BREAK_HYSTERESIS_LOW }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-hysteresis-low "${{ env.INPUTS_TIE_BREAK_HYSTERESIS_LOW }}")
           fi
-          if [[ "${{ inputs.tie_break_stability_max_abs_acceleration }}" != "" ]]; then
-            EXTRA_ARGS+=(--tie-break-stability-max-abs-acceleration "${{ inputs.tie_break_stability_max_abs_acceleration }}")
+          if [[ "${{ env.INPUTS_TIE_BREAK_STABILITY_MAX_ABS_ACCELERATION }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-stability-max-abs-acceleration "${{ env.INPUTS_TIE_BREAK_STABILITY_MAX_ABS_ACCELERATION }}")
           fi
-          if [[ "${{ inputs.tie_break_stability_max_near_boundary_streak }}" != "" ]]; then
-            EXTRA_ARGS+=(--tie-break-stability-max-near-boundary-streak "${{ inputs.tie_break_stability_max_near_boundary_streak }}")
+          if [[ "${{ env.INPUTS_TIE_BREAK_STABILITY_MAX_NEAR_BOUNDARY_STREAK }}" != "" ]]; then
+            EXTRA_ARGS+=(--tie-break-stability-max-near-boundary-streak "${{ env.INPUTS_TIE_BREAK_STABILITY_MAX_NEAR_BOUNDARY_STREAK }}")
           fi
           python3 tent_io/harness/tools/compute_promotion_decision.py \
             --internal-summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
             --external-compare "tent_io/harness/reports/expansion/external_eval_compare.current.json" \
             --out "tent_io/harness/reports/expansion/promotion_decision.current.json" \
             --history-out "tent_io/harness/reports/expansion/promotion_decision.history.ndjson" \
-            --alignment-required-runs "${{ inputs.promotion_alignment_required_runs }}" \
-            --min-internal-margin "${{ inputs.promotion_min_internal_margin }}" \
-            --min-external-vote-margin "${{ inputs.promotion_min_external_vote_margin }}" \
-            --external-margin-threshold "${{ inputs.contested_external_margin_threshold }}" \
-            --external-tie-break-streak-required "${{ inputs.contested_external_tie_break_streak }}" \
+            --alignment-required-runs "${{ env.INPUTS_PROMOTION_ALIGNMENT_REQUIRED_RUNS }}" \
+            --min-internal-margin "${{ env.INPUTS_PROMOTION_MIN_INTERNAL_MARGIN }}" \
+            --min-external-vote-margin "${{ env.INPUTS_PROMOTION_MIN_EXTERNAL_VOTE_MARGIN }}" \
+            --external-margin-threshold "${{ env.INPUTS_CONTESTED_EXTERNAL_MARGIN_THRESHOLD }}" \
+            --external-tie-break-streak-required "${{ env.INPUTS_CONTESTED_EXTERNAL_TIE_BREAK_STREAK }}" \
             --tie-break-margin-floor "0.01" \
             --tie-break-agreement-floor "0.6" \
             --tie-break-confidence-threshold "0.75" \
             --tie-break-target-margin "0.03" \
-            --tie-break-stability-near-epsilon "${{ inputs.tie_break_stability_near_epsilon }}" \
-            --tie-break-stability-history-tail "${{ inputs.tie_break_stability_history_tail }}" \
-            --tie-break-oscillation-amplitude-band "${{ inputs.tie_break_oscillation_amplitude_band }}" \
+            --tie-break-stability-near-epsilon "${{ env.INPUTS_TIE_BREAK_STABILITY_NEAR_EPSILON }}" \
+            --tie-break-stability-history-tail "${{ env.INPUTS_TIE_BREAK_STABILITY_HISTORY_TAIL }}" \
+            --tie-break-oscillation-amplitude-band "${{ env.INPUTS_TIE_BREAK_OSCILLATION_AMPLITUDE_BAND }}" \
             ${TIE_FLAG} ${ADAPT_FLAG} ${EFF_FLAG} ${HYS_FLAG} ${HYS_UP_FLAG} ${STAB_FLAG} ${STAB_UP_FLAG} "${EXTRA_ARGS[@]}"
 
+          DECISION_BASIS="confidence"
+          if [[ "${{ env.INPUTS_TIE_BREAK_USE_EFFECTIVE_CONFIDENCE }}" == "true" ]]; then
+            DECISION_BASIS="effective_confidence"
+          fi
+          HYS_HIGH_RESOLVED="${{ env.INPUTS_TIE_BREAK_HYSTERESIS_HIGH }}"
+          if [[ "$HYS_HIGH_RESOLVED" == "" ]]; then
+            HYS_HIGH_RESOLVED="(resolved in script)"
+          fi
+          HYS_LOW_RESOLVED="${{ env.INPUTS_TIE_BREAK_HYSTERESIS_LOW }}"
+          if [[ "$HYS_LOW_RESOLVED" == "" ]]; then
+            HYS_LOW_RESOLVED="(resolved in script)"
+          fi
+          EFF_THR_RESOLVED="${{ env.INPUTS_TIE_BREAK_EFFECTIVE_CONFIDENCE_THRESHOLD }}"
+          if [[ "$EFF_THR_RESOLVED" == "" ]]; then
+            EFF_THR_RESOLVED="(resolved in script)"
+          fi
+          STAB_ACC_RESOLVED="${{ env.INPUTS_TIE_BREAK_STABILITY_MAX_ABS_ACCELERATION }}"
+          if [[ "$STAB_ACC_RESOLVED" == "" ]]; then
+            STAB_ACC_RESOLVED="(disabled)"
+          fi
+          STAB_NB_RESOLVED="${{ env.INPUTS_TIE_BREAK_STABILITY_MAX_NEAR_BOUNDARY_STREAK }}"
+          if [[ "$STAB_NB_RESOLVED" == "" ]]; then
+            STAB_NB_RESOLVED="(disabled)"
+          fi
+          MODE_SIG=""
+          if [[ "${{ env.INPUTS_TIE_BREAK_USE_EFFECTIVE_CONFIDENCE }}" == "true" ]]; then MODE_SIG="${MODE_SIG}EC+"; fi
+          if [[ "${{ env.INPUTS_TIE_BREAK_HYSTERESIS_ENABLE }}" == "true" ]]; then MODE_SIG="${MODE_SIG}HYS+"; fi
+          if [[ "${{ env.INPUTS_TIE_BREAK_STABILITY_GATE }}" == "true" ]]; then MODE_SIG="${MODE_SIG}STAB+"; fi
+          if [[ "${{ env.INPUTS_TIE_BREAK_ADAPTIVE_THRESHOLD }}" == "true" ]]; then MODE_SIG="${MODE_SIG}ADAPT+"; fi
+          MODE_SIG="${MODE_SIG%+}"
+          if [[ "$MODE_SIG" == "" ]]; then MODE_SIG="BASE"; fi
+          if [[ "${{ env.INPUTS_TIE_BREAK_HYSTERESIS_UPWARD_ONLY }}" == "true" || "${{ env.INPUTS_TIE_BREAK_STABILITY_REQUIRE_UPWARD_CROSSING }}" == "true" ]]; then
+            MODE_SIG="${MODE_SIG} (upward-crossing constraints)"
+          fi
+
+          {
+            echo "## 🔬 Promotion Decision Mode"
+            echo ""
+            echo "- Decision basis: ${DECISION_BASIS}"
+            echo "- Effective-confidence threshold input: ${EFF_THR_RESOLVED}"
+            echo "- Hysteresis: ${{ env.INPUTS_TIE_BREAK_HYSTERESIS_ENABLE }}"
+            if [[ "${{ env.INPUTS_TIE_BREAK_HYSTERESIS_ENABLE }}" == "true" ]]; then
+              echo "  - High: ${HYS_HIGH_RESOLVED}"
+              echo "  - Low: ${HYS_LOW_RESOLVED}"
+              echo "  - Upward-only: ${{ env.INPUTS_TIE_BREAK_HYSTERESIS_UPWARD_ONLY }}"
+            fi
+            echo "- Stability gate: ${{ env.INPUTS_TIE_BREAK_STABILITY_GATE }}"
+            if [[ "${{ env.INPUTS_TIE_BREAK_STABILITY_GATE }}" == "true" ]]; then
+              echo "  - Require upward crossing: ${{ env.INPUTS_TIE_BREAK_STABILITY_REQUIRE_UPWARD_CROSSING }}"
+              echo "  - Max abs acceleration: ${STAB_ACC_RESOLVED}"
+              echo "  - Max near-boundary streak: ${STAB_NB_RESOLVED}"
+              echo "  - Near epsilon: ${{ env.INPUTS_TIE_BREAK_STABILITY_NEAR_EPSILON }}"
+              echo "  - History tail: ${{ env.INPUTS_TIE_BREAK_STABILITY_HISTORY_TAIL }}"
+              echo "  - Oscillation amplitude band: ${{ env.INPUTS_TIE_BREAK_OSCILLATION_AMPLITUDE_BAND }}"
+            fi
+            echo "- Adaptive threshold: ${{ env.INPUTS_TIE_BREAK_ADAPTIVE_THRESHOLD }}"
+            echo "- Trend windows: short=${{ env.INPUTS_TREND_WINDOW }}, long=${{ env.INPUTS_TREND_WINDOW_LONG }}"
+            echo ""
+            echo "- Signature: ${MODE_SIG}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          TREND_WINDOW="${{ env.INPUTS_TREND_WINDOW }}"
+          if ! [[ "$TREND_WINDOW" =~ ^[0-9]+$ ]]; then
+            TREND_WINDOW=5
+          fi
+          TREND_WINDOW_LONG="${{ env.INPUTS_TREND_WINDOW_LONG }}"
+          if ! [[ "$TREND_WINDOW_LONG" =~ ^[0-9]+$ ]]; then
+            TREND_WINDOW_LONG=20
+          fi
+          LB_WINDOW="${{ env.INPUTS_LEADERBOARD_WINDOW }}"
+          if ! [[ "$LB_WINDOW" =~ ^[0-9]+$ ]]; then
+            LB_WINDOW=10
+          fi
+
+          TREND_WINDOW="$TREND_WINDOW" TREND_WINDOW_LONG="$TREND_WINDOW_LONG" LB_WINDOW="$LB_WINDOW" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if not summary:
+              raise SystemExit(0)
+          decision_path = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          if not decision_path.exists():
+              with open(summary, "a", encoding="utf-8") as f:
+                  f.write("\n## 📊 Decision Outcome Snapshot\n\n- Promotion decision JSON missing.\n")
+              Path("promotion_proposal.flag").write_text("NOT_TRIGGERED", encoding="utf-8")
+              if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+                  with open("promotion_proposal.history", "a", encoding="utf-8") as hf:
+                      hf.write("NOT_TRIGGERED\n")
+              raise SystemExit(0)
+          data = json.loads(decision_path.read_text(encoding="utf-8"))
+          history_path = Path("tent_io/harness/reports/expansion/promotion_decision.history.ndjson")
+          trend_window = int(os.environ.get("TREND_WINDOW", "5"))
+          trend_window_long = int(os.environ.get("TREND_WINDOW_LONG", "20"))
+          leaderboard_window = int(os.environ.get("LB_WINDOW", "10"))
+          leaderboard_window = max(1, min(leaderboard_window, 50))
+
+          def _fmt_delta(cur, prev):
+              if not isinstance(cur, (int, float)) or not isinstance(prev, (int, float)):
+                  return None
+              return f"{(cur - prev):+0.4f}"
+
+          def _norm_state(v):
+              if v is None:
+                  return "_"
+              return str(v)
+
+          def compute_promotion_grade(stability, consistency, agreement, pressure, regime):
+              score = 0.0
+              if isinstance(stability, (int, float)):
+                  score += 0.30 * float(stability)
+              if isinstance(consistency, (int, float)):
+                  score += 0.20 * float(consistency)
+              if isinstance(agreement, (int, float)):
+                  score += 0.25 * float(agreement)
+              if isinstance(pressure, (int, float)):
+                  p = float(pressure)
+                  if p > 0:
+                      score += 0.15 * min(p / 0.05, 1.0)
+                  else:
+                      score += 0.15 * max(p / 0.05, -1.0)
+              if regime == "converging_to_promotion":
+                  score += 0.10
+              elif regime == "diverging_from_promotion":
+                  score -= 0.10
+              score = max(0.0, min(1.0, score))
+              if score >= 0.80:
+                  grade = "A"
+              elif score >= 0.65:
+                  grade = "B"
+              elif score >= 0.50:
+                  grade = "C"
+              else:
+                  grade = "D"
+              return grade, score
+
+          def compute_promotion_readiness(stability, agreement, confidence, threshold, regime):
+              stability_score = float(stability) if isinstance(stability, (int, float)) else 0.0
+              agreement_score = float(agreement) if isinstance(agreement, (int, float)) else 0.0
+
+              confidence_norm = 0.0
+              if isinstance(confidence, (int, float)) and isinstance(threshold, (int, float)) and float(threshold) > 0:
+                  confidence_norm = min(1.0, float(confidence) / float(threshold))
+
+              pressure_norm = 0.5
+              if isinstance(confidence, (int, float)) and isinstance(threshold, (int, float)):
+                  pressure = float(confidence) - float(threshold)
+                  pressure_scaled = max(-1.0, min(1.0, pressure / 0.05))
+                  pressure_norm = (pressure_scaled * 0.5) + 0.5
+
+              if regime == "converging_to_promotion":
+                  regime_bonus = 1.0
+              elif regime == "diverging_from_promotion":
+                  regime_bonus = 0.0
+              else:
+                  regime_bonus = 0.5
+
+              readiness = (
+                  0.30 * stability_score
+                  + 0.25 * agreement_score
+                  + 0.20 * confidence_norm
+                  + 0.15 * pressure_norm
+                  + 0.10 * regime_bonus
+              )
+              readiness = max(0.0, min(1.0, readiness))
+              if readiness >= 0.80:
+                  label = "🟢 READY"
+              elif readiness >= 0.65:
+                  label = "🔵 NEAR READY"
+              elif readiness >= 0.50:
+                  label = "🟡 HOLD"
+              else:
+                  label = "🔴 BLOCK"
+              return readiness, label
+
+          def grade_badge(g):
+              return {
+                  "A": "🟢 Strong",
+                  "B": "🔵 Good",
+                  "C": "🟡 Marginal",
+                  "D": "🔴 Weak",
+              }.get(str(g), "_")
+
+          def grade_dot(g):
+              return {
+                  "A": "🟢",
+                  "B": "🔵",
+                  "C": "🟡",
+                  "D": "🔴",
+              }.get(str(g), "⚪")
+
+          def fmt_num(v, digits=2, signed=False):
+              if not isinstance(v, (int, float)):
+                  return "-"
+              if signed:
+                  return f"{float(v):+0.{digits}f}"
+              return f"{float(v):0.{digits}f}"
+
+          def row_consistency(rows_all, idx, k=5):
+              lo = max(0, idx - k + 1)
+              seg = rows_all[lo:idx + 1]
+              states = [str(r.get("decision_state", "_")) for r in seg]
+              if len(states) <= 1:
+                  return 1.0
+              flips = 0
+              for i in range(1, len(states)):
+                  if states[i] != states[i - 1]:
+                      flips += 1
+              return 1.0 - (flips / max(1, len(states) - 1))
+
+          prev = None
+          if history_path.exists():
+              rows = []
+              for raw in history_path.read_text(encoding="utf-8").splitlines():
+                  raw = raw.strip()
+                  if not raw:
+                      continue
+                  try:
+                      row = json.loads(raw)
+                  except json.JSONDecodeError:
+                      continue
+                  if isinstance(row, dict):
+                      rows.append(row)
+              if len(rows) >= 2:
+                  prev = rows[-2]
+
+          lines = [
+              "\n## 📊 Decision Outcome Snapshot\n",
+              f"- Final state: {data.get('decision_state')}",
+              f"- Promotion allowed: {data.get('promotion_allowed')}",
+              f"- Effective threshold (resolved): {data.get('tie_break_confidence_threshold_effective')}",
+              f"- Metric used: {data.get('tie_break_metric_used')}",
+              f"- Metric value: {data.get('tie_break_metric_value')}",
+              f"- Effective confidence: {data.get('tie_break_effective_confidence')}",
+              f"- Stability score: {data.get('tie_break_stability_score')}",
+              f"- Stability gate passed: {data.get('tie_break_stability_gate_passed')}",
+              f"- Hysteresis passed: {data.get('tie_break_hysteresis_passed')}",
+              f"- Tie-break reason: {data.get('tie_break_reason')}",
+          ]
+          lines.append("")
+          lines.append("## 🔁 Outcome vs Previous Run")
+          lines.append("")
+          cur_grade = None
+          cur_grade_score = None
+          prev_grade = None
+          prev_grade_score = None
+
+          if prev is None:
+              lines.append("- _No previous run available_")
+          else:
+              cur_state = data.get("decision_state")
+              prev_state = prev.get("decision_state")
+              cur_allowed = data.get("promotion_allowed")
+              prev_allowed = prev.get("promotion_allowed")
+              lines.append(f"- Final state: {_norm_state(prev_state)} → {_norm_state(cur_state)}")
+              lines.append(f"- Promotion allowed: {_norm_state(prev_allowed)} → {_norm_state(cur_allowed)}")
+              if prev_state != cur_state:
+                  lines.append("- ⚠️ State changed")
+              if prev_allowed != cur_allowed:
+                  lines.append("- 🚨 Promotion permission changed")
+
+              pairs = [
+                  ("Metric value", "tie_break_metric_value"),
+                  ("Effective confidence", "tie_break_effective_confidence"),
+                  ("Effective threshold", "tie_break_confidence_threshold_effective"),
+                  ("Stability score", "tie_break_stability_score"),
+              ]
+              for label, key in pairs:
+                  pv = prev.get(key)
+                  cv = data.get(key)
+                  d = _fmt_delta(cv, pv)
+                  if d is not None:
+                      lines.append(f"- {label}: {pv} → {cv} ({d})")
+                  elif pv is not None or cv is not None:
+                      lines.append(f"- {label}: {_norm_state(pv)} → {_norm_state(cv)}")
+
+              lines.append(
+                  f"- Stability gate: {_norm_state(prev.get('tie_break_stability_gate_passed'))} → {_norm_state(data.get('tie_break_stability_gate_passed'))}"
+              )
+              lines.append(
+                  f"- Hysteresis: {_norm_state(prev.get('tie_break_hysteresis_passed'))} → {_norm_state(data.get('tie_break_hysteresis_passed'))}"
+              )
+              lines.append(
+                  f"- Tie-break reason: {_norm_state(prev.get('tie_break_reason'))} → {_norm_state(data.get('tie_break_reason'))}"
+              )
+
+          def add_trend_block(lines_out, rows_all, window):
+              lines_out.append("")
+              lines_out.append(f"## 📈 Rolling Decision Trend (last {window} runs)")
+              lines_out.append("")
+              tail = rows_all[-window:]
+              if not tail:
+                  lines_out.append("- _No history available_")
+                  return {"consistency": None, "pressure": None, "trend": None}
+              states = [str(r.get("decision_state", "_")) for r in tail]
+              allowed = ["T" if r.get("promotion_allowed") is True else "F" if r.get("promotion_allowed") is False else "_" for r in tail]
+              lines_out.append(f"- States: {' → '.join(states)}")
+              lines_out.append(f"- Promotion allowed: {' → '.join(allowed)}")
+
+              econf = [float(r["tie_break_effective_confidence"]) for r in tail if isinstance(r.get("tie_break_effective_confidence"), (int, float))]
+              if econf:
+                  lines_out.append(f"- Avg effective confidence: {sum(econf)/len(econf):0.3f}")
+              stab = [float(r["tie_break_stability_score"]) for r in tail if isinstance(r.get("tie_break_stability_score"), (int, float))]
+              if stab:
+                  lines_out.append(f"- Avg stability score: {sum(stab)/len(stab):0.3f}")
+
+              flips = 0
+              for i in range(1, len(states)):
+                  if states[i] != states[i - 1]:
+                      flips += 1
+              lines_out.append(f"- State flips: {flips}")
+              consistency = 1.0 - (flips / max(1, len(states) - 1))
+              lines_out.append(f"- Consistency score: {consistency:0.3f}")
+
+              crossings = 0
+              pressure_vals = []
+              dvals = []
+              for r in tail:
+                  c = r.get("tie_break_confidence")
+                  t = r.get("tie_break_confidence_threshold_effective")
+                  if isinstance(c, (int, float)) and isinstance(t, (int, float)):
+                      d = float(c) - float(t)
+                      dvals.append(d)
+                      pressure_vals.append(d)
+                  else:
+                      dvals.append(None)
+              for i in range(1, len(dvals)):
+                  a = dvals[i - 1]
+                  b = dvals[i]
+                  if isinstance(a, float) and isinstance(b, float) and a * b < 0:
+                      crossings += 1
+              lines_out.append(f"- Boundary crossings: {crossings}")
+              if pressure_vals:
+                  lines_out.append(f"- Promotion pressure: {sum(pressure_vals)/len(pressure_vals):+0.3f}")
+              pressure_avg = (sum(pressure_vals) / len(pressure_vals)) if pressure_vals else None
+
+              trend = "indeterminate"
+              if len(econf) >= 2:
+                  delta = econf[-1] - econf[0]
+                  if delta > 0.02:
+                      trend = "converging_to_promotion"
+                  elif delta < -0.02:
+                      trend = "diverging_from_promotion"
+              lines_out.append(f"- Trend: {trend}")
+              regime = "stable" if flips <= 1 else "oscillatory" if flips >= 3 else "drifting"
+              lines_out.append(f"- Stability regime: {regime}")
+              return {"consistency": consistency, "pressure": pressure_avg, "trend": trend}
+
+          if not history_path.exists():
+              lines.append("")
+              lines.append(f"## 📈 Rolling Decision Trend (last {trend_window} runs)")
+              lines.append("")
+              lines.append("- _No history available_")
+              short_stats = {"consistency": None, "pressure": None, "trend": None}
+          else:
+              rows = []
+              for raw in history_path.read_text(encoding="utf-8").splitlines():
+                  raw = raw.strip()
+                  if not raw:
+                      continue
+                  try:
+                      row = json.loads(raw)
+                  except json.JSONDecodeError:
+                      continue
+                  if isinstance(row, dict):
+                      rows.append(row)
+              short_stats = add_trend_block(lines, rows, trend_window)
+              if trend_window_long != trend_window:
+                  add_trend_block(lines, rows, trend_window_long)
+
+          cur_grade, cur_grade_score = compute_promotion_grade(
+              data.get("tie_break_stability_score"),
+              short_stats.get("consistency"),
+              data.get("external_metric_agreement_ratio"),
+              short_stats.get("pressure"),
+              short_stats.get("trend"),
+          )
+          prev_pressure = None
+          if prev is not None:
+              pc = prev.get("tie_break_confidence")
+              pt = prev.get("tie_break_confidence_threshold_effective")
+              if isinstance(pc, (int, float)) and isinstance(pt, (int, float)):
+                  prev_pressure = float(pc) - float(pt)
+              prev_grade, prev_grade_score = compute_promotion_grade(
+                  prev.get("tie_break_stability_score"),
+                  None,
+                  prev.get("external_metric_agreement_ratio"),
+                  prev_pressure,
+                  prev.get("tie_break_trajectory_dynamical_class"),
+              )
+
+          lines.append("")
+          lines.append("## 🏁 Promotion Assessment")
+          lines.append("")
+          lines.append(f"- Grade: {cur_grade} ({grade_badge(cur_grade)})")
+          lines.append(f"- Grade score: {cur_grade_score:0.3f}" if isinstance(cur_grade_score, (int, float)) else "- Grade score: _")
+          if prev_grade is not None:
+              order = {"A": 4, "B": 3, "C": 2, "D": 1}
+              direction = "→"
+              if order.get(str(cur_grade), 0) > order.get(str(prev_grade), 0):
+                  direction = "↑"
+              elif order.get(str(cur_grade), 0) < order.get(str(prev_grade), 0):
+                  direction = "↓"
+              lines.append(f"- Grade delta: {prev_grade} → {cur_grade} ({direction})")
+          lines.append("- Rationale:")
+          lines.append(f"  - stability_score: {_norm_state(data.get('tie_break_stability_score'))}")
+          lines.append(f"  - consistency: {_norm_state(short_stats.get('consistency'))}")
+          lines.append(f"  - agreement_ratio: {_norm_state(data.get('external_metric_agreement_ratio'))}")
+          lines.append(f"  - promotion_pressure: {_norm_state(short_stats.get('pressure'))}")
+          lines.append(f"  - regime: {_norm_state(short_stats.get('trend'))}")
+          lines.append("- Note: Grade is interpretive and does not override policy gates.")
+          lines.append("")
+          readiness_score, readiness_label = compute_promotion_readiness(
+              data.get("tie_break_stability_score"),
+              data.get("external_metric_agreement_ratio"),
+              data.get("tie_break_confidence"),
+              data.get("tie_break_confidence_threshold_effective"),
+              short_stats.get("trend"),
+          )
+          lines.append("## 🚦 Promotion Readiness Signal")
+          lines.append("")
+          lines.append(f"- Score: {readiness_score:0.3f} → {readiness_label}")
+          lines.append(
+              f"- Inputs: stability={_norm_state(data.get('tie_break_stability_score'))}, "
+              f"agreement={_norm_state(data.get('external_metric_agreement_ratio'))}, "
+              f"confidence={_norm_state(data.get('tie_break_confidence'))}, "
+              f"threshold={_norm_state(data.get('tie_break_confidence_threshold_effective'))}, "
+              f"regime={_norm_state(short_stats.get('trend'))}"
+          )
+          _instability_class = data.get("tie_break_trajectory_dynamical_class")
+          _instability_stability = data.get("tie_break_stability_score")
+          _instability_detected = (
+              _instability_class in ("oscillating_boundary", "large_swing_instability")
+              or (isinstance(_instability_stability, (int, float)) and float(_instability_stability) < 0.4)
+          )
+          if _instability_detected:
+              if _instability_class in ("oscillating_boundary", "large_swing_instability"):
+                  _instability_msg = (
+                      f"- ⚠️ Instability: {_instability_class} "
+                      f"(stability={_norm_state(_instability_stability)})"
+                  )
+              elif isinstance(_instability_stability, (int, float)):
+                  _instability_msg = (
+                      f"- ⚠️ Instability: low stability_score ({float(_instability_stability):0.3f})"
+                  )
+              else:
+                  _instability_msg = "- ⚠️ Instability: low stability_score (_)"
+              lines.append(_instability_msg)
+          lines.append("- Note: This signal is advisory and does not override policy gates.")
+
+          # Advisory promotion proposal (recommendation only; does not auto-promote).
+          _prop_stab = data.get("tie_break_stability_score")
+          _prop_cons = short_stats.get("consistency")
+          proposal = (
+              isinstance(readiness_score, (int, float))
+              and float(readiness_score) >= 0.80
+              and isinstance(_prop_stab, (int, float))
+              and float(_prop_stab) >= 0.7
+              and isinstance(_prop_cons, (int, float))
+              and float(_prop_cons) >= 0.7
+          )
+          _favor = data.get("external_favored_slot")
+          if _favor in ("expand_s1", "expand_s2"):
+              _candidate = _favor
+          elif isinstance(_favor, str) and _favor:
+              _candidate = _favor
+          else:
+              _candidate = "unknown"
+          lines.append("")
+          lines.append("## 🚀 Promotion Proposal")
+          lines.append("")
+          if proposal:
+              lines.append("- Status: **TRIGGERED**")
+              lines.append(
+                  "- Reason: Readiness ≥ 0.80 with stability_score ≥ 0.7 and consistency ≥ 0.7 (advisory only)."
+              )
+              lines.append(f"- Candidate: `{_candidate}`")
+              if _instability_detected:
+                  lines.append("- ⚠️ Instability detected — advisory only; does not block proposal.")
+          else:
+              lines.append("- Status: **NOT TRIGGERED**")
+              _bits = []
+              if not (isinstance(readiness_score, (int, float)) and float(readiness_score) >= 0.80):
+                  _bits.append(f"readiness={readiness_score if isinstance(readiness_score, (int, float)) else 'n/a'}")
+              if not (isinstance(_prop_stab, (int, float)) and float(_prop_stab) >= 0.7):
+                  _bits.append(f"stability={_norm_state(_prop_stab)}")
+              if not (isinstance(_prop_cons, (int, float)) and float(_prop_cons) >= 0.7):
+                  _bits.append(f"consistency={_norm_state(_prop_cons)}")
+              if _instability_detected:
+                  _bits.append("instability=detected")
+              lines.append(f"- Reason: thresholds not met ({', '.join(_bits) if _bits else 'inputs missing'}).")
+              lines.append(f"- Candidate (current favored slot): `{_candidate}`")
+          lines.append("- Note: Proposal does not change baseline or override policy gates.")
+
+          Path("promotion_proposal.flag").write_text(
+              "TRIGGERED" if proposal else "NOT_TRIGGERED",
+              encoding="utf-8",
+          )
+          if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+              with open("promotion_proposal.history", "a", encoding="utf-8") as hf:
+                  hf.write("TRIGGERED\n" if proposal else "NOT_TRIGGERED\n")
+
+          if history_path.exists():
+              hist_rows = []
+              for raw in history_path.read_text(encoding="utf-8").splitlines():
+                  raw = raw.strip()
+                  if not raw:
+                      continue
+                  try:
+                      row = json.loads(raw)
+                  except json.JSONDecodeError:
+                      continue
+                  if isinstance(row, dict):
+                      hist_rows.append(row)
+              lb_tail = hist_rows[-leaderboard_window:]
+              lines.append("")
+              lines.append(f"## 🧭 Recent Runs Leaderboard (last {len(lb_tail)})")
+              lines.append("")
+              if not lb_tail:
+                  lines.append("- _No history available_")
+              else:
+                  lines.append("| Run | State | Grade | Score | Δ | Conf | Thr | Pressure | Stability | Consistency |")
+                  lines.append("|-----|------|------|-------|---|------|-----|----------|-----------|-------------|")
+                  start_idx = len(hist_rows) - len(lb_tail)
+                  rows_newest = list(reversed(list(enumerate(lb_tail, start=start_idx))))
+                  for rank, (abs_idx, row) in enumerate(rows_newest, start=1):
+                      state = str(row.get("decision_state", "-"))
+                      conf = row.get("tie_break_effective_confidence")
+                      thr = row.get("tie_break_confidence_threshold_effective")
+                      pressure = None
+                      if isinstance(conf, (int, float)) and isinstance(thr, (int, float)):
+                          pressure = float(conf) - float(thr)
+                      stability = row.get("tie_break_stability_score")
+                      consistency = row_consistency(hist_rows, abs_idx, k=5)
+                      agreement = row.get("external_metric_agreement_ratio")
+                      regime = row.get("tie_break_trajectory_dynamical_class")
+                      grade, score = compute_promotion_grade(stability, consistency, agreement, pressure, regime)
+
+                      delta_symbol = "→"
+                      prev_score = None
+                      if abs_idx > 0:
+                          prev_row = hist_rows[abs_idx - 1]
+                          pconf = prev_row.get("tie_break_effective_confidence")
+                          pthr = prev_row.get("tie_break_confidence_threshold_effective")
+                          ppressure = None
+                          if isinstance(pconf, (int, float)) and isinstance(pthr, (int, float)):
+                              ppressure = float(pconf) - float(pthr)
+                          pstability = prev_row.get("tie_break_stability_score")
+                          pconsistency = row_consistency(hist_rows, abs_idx - 1, k=5)
+                          pagreement = prev_row.get("external_metric_agreement_ratio")
+                          pregime = prev_row.get("tie_break_trajectory_dynamical_class")
+                          _, prev_score = compute_promotion_grade(pstability, pconsistency, pagreement, ppressure, pregime)
+                      if isinstance(prev_score, (int, float)):
+                          if score > prev_score + 1e-6:
+                              delta_symbol = "↑"
+                          elif score < prev_score - 1e-6:
+                              delta_symbol = "↓"
+
+                      run_label = f"-{rank}"
+                      grade_cell = f"{grade_dot(grade)} {grade}"
+                      if rank == 1:
+                          run_label = f"**{run_label}**"
+                          state = f"**{state}**"
+                          grade_cell = f"**{grade_cell}**"
+                      lines.append(
+                          f"| {run_label} | {state} | {grade_cell} | {fmt_num(score, 2)} | {delta_symbol} | "
+                          f"{fmt_num(conf, 2)} | {fmt_num(thr, 2)} | {fmt_num(pressure, 2, signed=True)} | "
+                          f"{fmt_num(stability, 2)} | {fmt_num(consistency, 2)} |"
+                      )
+
+                  lines.append("")
+                  lines.append("## 📉 Post-Promotion Tracking")
+                  lines.append("")
+                  promotion_idx = None
+                  for i in range(len(hist_rows) - 1, -1, -1):
+                      r = hist_rows[i]
+                      st = str(r.get("decision_state", ""))
+                      allowed = r.get("promotion_allowed") is True
+                      if allowed and st in ("aligned_ready_for_promotion", "contested_external_override"):
+                          promotion_idx = i
+                          break
+                  if promotion_idx is None:
+                      lines.append("- _No promotion point found in history_")
+                  else:
+                      p_row = hist_rows[promotion_idx]
+                      promotion_profile = p_row.get("external_favored_slot")
+                      if promotion_profile not in ("expand_s1", "expand_s2"):
+                          for _k in ("internal_winner", "external_winner", "internal_slot"):
+                              _v = p_row.get(_k)
+                              if isinstance(_v, str) and _v:
+                                  promotion_profile = _v
+                                  break
+                      if not isinstance(promotion_profile, str) or not promotion_profile:
+                          promotion_profile = "unknown"
+                      post_window = 5
+                      post_rows = hist_rows[promotion_idx + 1 : promotion_idx + 1 + post_window]
+                      run_ago = len(hist_rows) - promotion_idx
+                      lines.append(f"- Promoted: `{promotion_profile}` (run -{run_ago})")
+                      lines.append(f"- Window: {post_window} runs after promotion")
+                      if not post_rows:
+                          lines.append("- _No post-promotion data yet_")
+                      else:
+                          favored = [r.get("external_favored_slot") for r in post_rows]
+                          wins = sum(1 for v in favored if v == promotion_profile)
+                          total = len(post_rows)
+                          retained = wins / max(1, total)
+                          lines.append(f"- Retained dominance: {wins}/{total} ({retained:0.2f})")
+
+                          seq = [v for v in favored if isinstance(v, str)]
+                          if len(seq) >= 2:
+                              flips = sum(1 for i in range(1, len(seq)) if seq[i] != seq[i - 1])
+                              win_stability = 1.0 - (flips / max(1, len(seq) - 1))
+                          else:
+                              win_stability = None
+                          lines.append(
+                              f"- Win stability: {win_stability:0.2f}"
+                              if isinstance(win_stability, (int, float))
+                              else "- Win stability: _"
+                          )
+
+                          pressures = []
+                          confidences = []
+                          for r in post_rows:
+                              c = r.get("tie_break_confidence")
+                              t = r.get("tie_break_confidence_threshold_effective")
+                              if isinstance(c, (int, float)):
+                                  confidences.append(float(c))
+                              if isinstance(c, (int, float)) and isinstance(t, (int, float)):
+                                  pressures.append(float(c) - float(t))
+                          avg_pressure = (sum(pressures) / len(pressures)) if pressures else None
+                          lines.append(
+                              f"- Avg pressure: {avg_pressure:+0.3f}"
+                              if isinstance(avg_pressure, (int, float))
+                              else "- Avg pressure: _"
+                          )
+
+                          promotion_conf = p_row.get("tie_break_confidence")
+                          avg_conf = (sum(confidences) / len(confidences)) if confidences else None
+                          conf_delta = None
+                          if isinstance(avg_conf, (int, float)) and isinstance(promotion_conf, (int, float)):
+                              conf_delta = float(avg_conf) - float(promotion_conf)
+                          lines.append(
+                              f"- Confidence Δ vs promotion: {conf_delta:+0.3f}"
+                              if isinstance(conf_delta, (int, float))
+                              else "- Confidence Δ vs promotion: _"
+                          )
+
+                          current_favored = None
+                          if post_rows:
+                              current_favored = post_rows[-1].get("external_favored_slot")
+                          if isinstance(current_favored, str) and current_favored:
+                              lines.append(f"- Current favored: `{current_favored}`")
+
+                          if isinstance(win_stability, (int, float)) and retained >= 0.7 and win_stability >= 0.7:
+                              status = "🟢 holding"
+                          elif retained >= 0.5:
+                              status = "🟡 mixed"
+                          else:
+                              status = "🔴 degrading"
+                          lines.append(f"- Status: {status}")
+                          if status == "🔴 degrading":
+                              lines.append("- ⚠️ Regression detected relative to promotion baseline (advisory).")
+
+                  lines.append("")
+                  lines.append("## ⚔️ Profile Comparison Leaderboard (S1 vs S2)")
+                  lines.append("")
+                  s1_wins = sum(1 for r in lb_tail if r.get("external_favored_slot") == "expand_s1")
+                  s2_wins = sum(1 for r in lb_tail if r.get("external_favored_slot") == "expand_s2")
+                  leader = "Tie"
+                  if s1_wins > s2_wins:
+                      leader = "S1 leading"
+                  elif s2_wins > s1_wins:
+                      leader = "S2 leading"
+                  lines.append(f"- Dominance: S1 {s1_wins} / S2 {s2_wins} (last {len(lb_tail)}) → {leader}")
+                  lines.append("")
+                  lines.append("| Run | Favored | S1 Score | S2 Score | Margin | Strength | Agreement | Winner | Confidence |")
+                  lines.append("|-----|---------|----------|----------|--------|----------|-----------|--------|------------|")
+
+                  for rank, row in enumerate(reversed(lb_tail), start=1):
+                      favored = row.get("external_favored_slot")
+                      favored_lbl = "S1" if favored == "expand_s1" else "S2" if favored == "expand_s2" else "Tie"
+                      s1 = row.get("external_aggregate_s1")
+                      s2 = row.get("external_aggregate_s2")
+                      margin = row.get("external_margin_signed")
+                      agreement = row.get("external_metric_agreement_ratio")
+                      conf = row.get("tie_break_confidence")
+
+                      winner = "Tie"
+                      if isinstance(margin, (int, float)):
+                          if float(margin) > 1e-12:
+                              winner = "S1"
+                          elif float(margin) < -1e-12:
+                              winner = "S2"
+                      strength = "-"
+                      if isinstance(margin, (int, float)):
+                          mabs = abs(float(margin))
+                          if mabs < 0.01:
+                              strength = "weak"
+                          elif mabs <= 0.03:
+                              strength = "moderate"
+                          else:
+                              strength = "strong"
+
+                      run_label = f"-{rank}"
+                      if rank == 1:
+                          run_label = f"**{run_label}**"
+                      lines.append(
+                          f"| {run_label} | {favored_lbl} | {fmt_num(s1, 3)} | {fmt_num(s2, 3)} | "
+                          f"{fmt_num(margin, 3, signed=True)} | {strength} | {fmt_num(agreement, 2)} | "
+                          f"{winner} | {fmt_num(conf, 2)} |"
+                      )
+
+                  def render_profile_slice(title, slice_rows):
+                      lines.append("")
+                      lines.append(f"## ⚔️ {title}")
+                      lines.append("")
+                      if len(slice_rows) < 2:
+                          lines.append("- _Insufficient data for this slice_")
+                          return
+                      s1_w = sum(1 for r in slice_rows if r.get("external_favored_slot") == "expand_s1")
+                      s2_w = sum(1 for r in slice_rows if r.get("external_favored_slot") == "expand_s2")
+                      leader_local = "Tie"
+                      if s1_w > s2_w:
+                          leader_local = "S1 leading"
+                      elif s2_w > s1_w:
+                          leader_local = "S2 leading"
+                      lines.append(f"- Dominance: S1 {s1_w} / S2 {s2_w} (last {len(slice_rows)}) → {leader_local}")
+
+                      wins = [r.get("external_favored_slot") for r in slice_rows if isinstance(r.get("external_favored_slot"), str)]
+                      if len(wins) >= 2:
+                          flips_local = sum(1 for i in range(1, len(wins)) if wins[i] != wins[i - 1])
+                          win_stability = 1.0 - (flips_local / max(1, len(wins) - 1))
+                          lines.append(f"- Win stability: {win_stability:0.3f}")
+                      else:
+                          lines.append("- Win stability: _")
+
+                      margins_local = [float(r.get("external_margin_signed")) for r in slice_rows if isinstance(r.get("external_margin_signed"), (int, float))]
+                      if margins_local:
+                          net_margin = sum(margins_local) / len(margins_local)
+                          side = "S1 advantage" if net_margin > 1e-12 else "S2 advantage" if net_margin < -1e-12 else "Neutral"
+                          lines.append(f"- Net margin: {net_margin:+0.3f} ({side})")
+                      else:
+                          lines.append("- Net margin: _")
+                      lines.append("")
+                      lines.append("| Run | Favored | S1 Score | S2 Score | Margin | Strength | Agreement | Winner | Confidence |")
+                      lines.append("|-----|---------|----------|----------|--------|----------|-----------|--------|------------|")
+                      for rank, row in enumerate(reversed(slice_rows), start=1):
+                          favored = row.get("external_favored_slot")
+                          favored_lbl = "S1" if favored == "expand_s1" else "S2" if favored == "expand_s2" else "Tie"
+                          s1 = row.get("external_aggregate_s1")
+                          s2 = row.get("external_aggregate_s2")
+                          margin = row.get("external_margin_signed")
+                          agreement = row.get("external_metric_agreement_ratio")
+                          conf = row.get("tie_break_confidence")
+                          winner = "Tie"
+                          if isinstance(margin, (int, float)):
+                              if float(margin) > 1e-12:
+                                  winner = "S1"
+                              elif float(margin) < -1e-12:
+                                  winner = "S2"
+                          strength = "-"
+                          if isinstance(margin, (int, float)):
+                              mabs = abs(float(margin))
+                              if mabs < 0.01:
+                                  strength = "weak"
+                              elif mabs <= 0.03:
+                                  strength = "moderate"
+                              else:
+                                  strength = "strong"
+                          lines.append(
+                              f"| -{rank} | {favored_lbl} | {fmt_num(s1, 3)} | {fmt_num(s2, 3)} | "
+                              f"{fmt_num(margin, 3, signed=True)} | {strength} | {fmt_num(agreement, 2)} | "
+                              f"{winner} | {fmt_num(conf, 2)} |"
+                          )
+
+                  rows_contested = [r for r in lb_tail if r.get("decision_state") == "contested"]
+                  rows_tb = [
+                      r for r in lb_tail
+                      if bool(r.get("tie_break_applied")) or isinstance(r.get("tie_break_confidence"), (int, float))
+                  ]
+                  rows_strong = [
+                      r for r in lb_tail
+                      if isinstance(r.get("tie_break_confidence"), (int, float))
+                      and isinstance(r.get("tie_break_confidence_threshold_effective"), (int, float))
+                      and float(r.get("tie_break_confidence")) >= float(r.get("tie_break_confidence_threshold_effective"))
+                  ]
+                  render_profile_slice("Contested Runs Only (S1 vs S2)", rows_contested)
+                  render_profile_slice("Tie-Break Active Runs", rows_tb)
+                  render_profile_slice("High-Confidence Wins (conf ≥ threshold)", rows_strong)
+          with open(summary, "a", encoding="utf-8") as f:
+              f.write("\n".join(lines) + "\n")
+          PY
+
       - name: Summarize promotion decision trend (non-blocking)
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 tent_io/harness/tools/summarize_promotion_decision_trend.py \
             --history "tent_io/harness/reports/expansion/promotion_decision.history.ndjson" \
@@ -843,7 +1671,7 @@ jobs:
             --window 20
 
       - name: Snapshot previous intelligence scoring
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 - <<'PY'
           import json
@@ -862,19 +1690,19 @@ jobs:
           PY
 
       - name: Compute intelligence scoring (non-blocking)
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 tent_io/harness/tools/compute_intelligence_scoring.py \
             --sweep-summary "tent_io/harness/reports/expansion/llt_expansion_sweep.current.json" \
             --external-compare "tent_io/harness/reports/expansion/external_eval_compare.current.json" \
             --promotion-decision "tent_io/harness/reports/expansion/promotion_decision.current.json" \
             --promotion-trend "tent_io/harness/reports/expansion/promotion_decision_trend.current.json" \
-            --scoring-preset "${{ inputs.intelligence_scoring_preset }}" \
+            --scoring-preset "${{ env.INPUTS_INTELLIGENCE_SCORING_PRESET }}" \
             --out-json "tent_io/harness/reports/expansion/intelligence_scoring.current.json" \
             --out-md "tent_io/harness/reports/expansion/intelligence_scoring.current.md"
 
       - name: Check intelligence score regression
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           CMD=(
             python3 tent_io/harness/tools/check_intelligence_regression.py
@@ -883,80 +1711,80 @@ jobs:
             --out "tent_io/harness/reports/expansion/intelligence_regression.current.json"
             --history-out "tent_io/harness/reports/expansion/intelligence_regression.history.ndjson"
           )
-          if [[ "${{ inputs.intelligence_min_delta_ml_score }}" != "" ]]; then
-            CMD+=(--min-delta-ml-score "${{ inputs.intelligence_min_delta_ml_score }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_ML_SCORE }}" != "" ]]; then
+            CMD+=(--min-delta-ml-score "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_ML_SCORE }}")
           fi
-          if [[ "${{ inputs.intelligence_min_delta_logic_chain_score }}" != "" ]]; then
-            CMD+=(--min-delta-logic-chain-score "${{ inputs.intelligence_min_delta_logic_chain_score }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_LOGIC_CHAIN_SCORE }}" != "" ]]; then
+            CMD+=(--min-delta-logic-chain-score "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_LOGIC_CHAIN_SCORE }}")
           fi
-          if [[ "${{ inputs.intelligence_min_delta_ai_score }}" != "" ]]; then
-            CMD+=(--min-delta-ai-score "${{ inputs.intelligence_min_delta_ai_score }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_AI_SCORE }}" != "" ]]; then
+            CMD+=(--min-delta-ai-score "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_AI_SCORE }}")
           fi
-          if [[ "${{ inputs.intelligence_min_delta_agi_readiness_score }}" != "" ]]; then
-            CMD+=(--min-delta-agi-readiness-score "${{ inputs.intelligence_min_delta_agi_readiness_score }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_AGI_READINESS_SCORE }}" != "" ]]; then
+            CMD+=(--min-delta-agi-readiness-score "${{ env.INPUTS_INTELLIGENCE_MIN_DELTA_AGI_READINESS_SCORE }}")
           fi
-          if [[ "${{ inputs.intelligence_max_delta_contested_ratio }}" != "" ]]; then
-            CMD+=(--max-delta-contested-ratio "${{ inputs.intelligence_max_delta_contested_ratio }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MAX_DELTA_CONTESTED_RATIO }}" != "" ]]; then
+            CMD+=(--max-delta-contested-ratio "${{ env.INPUTS_INTELLIGENCE_MAX_DELTA_CONTESTED_RATIO }}")
           fi
-          if [[ "${{ inputs.enforce_intelligence_regression }}" == "true" ]]; then
+          if [[ "${{ env.INPUTS_ENFORCE_INTELLIGENCE_REGRESSION }}" == "true" ]]; then
             CMD+=(--enforce)
           fi
           "${CMD[@]}"
 
       - name: Summarize intelligence regression trend
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           CMD=(
             python3 tent_io/harness/tools/summarize_intelligence_regression_trend.py
             --history "tent_io/harness/reports/expansion/intelligence_regression.history.ndjson"
             --out-json "tent_io/harness/reports/expansion/intelligence_regression_trend.current.json"
             --out-md "tent_io/harness/reports/expansion/intelligence_regression_trend.current.md"
-            --window "${{ inputs.intelligence_regression_trend_window }}"
+            --window "${{ env.INPUTS_INTELLIGENCE_REGRESSION_TREND_WINDOW }}"
           )
-          if [[ "${{ inputs.intelligence_regression_max_alarm_ratio }}" != "" ]]; then
-            CMD+=(--max-alarm-ratio "${{ inputs.intelligence_regression_max_alarm_ratio }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_REGRESSION_MAX_ALARM_RATIO }}" != "" ]]; then
+            CMD+=(--max-alarm-ratio "${{ env.INPUTS_INTELLIGENCE_REGRESSION_MAX_ALARM_RATIO }}")
           fi
-          if [[ "${{ inputs.intelligence_regression_max_consecutive_alarms }}" != "" ]]; then
-            CMD+=(--max-consecutive-alarms "${{ inputs.intelligence_regression_max_consecutive_alarms }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_REGRESSION_MAX_CONSECUTIVE_ALARMS }}" != "" ]]; then
+            CMD+=(--max-consecutive-alarms "${{ env.INPUTS_INTELLIGENCE_REGRESSION_MAX_CONSECUTIVE_ALARMS }}")
           fi
-          if [[ "${{ inputs.enforce_intelligence_regression_trend }}" == "true" ]]; then
+          if [[ "${{ env.INPUTS_ENFORCE_INTELLIGENCE_REGRESSION_TREND }}" == "true" ]]; then
             CMD+=(--enforce)
           fi
           "${CMD[@]}"
 
       - name: Check intelligence readiness
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           CMD=(
             python3 tent_io/harness/tools/check_intelligence_readiness.py
             --score-json "tent_io/harness/reports/expansion/intelligence_scoring.current.json"
             --out "tent_io/harness/reports/expansion/intelligence_readiness.current.json"
           )
-          if [[ "${{ inputs.intelligence_min_ml_score }}" != "" ]]; then
-            CMD+=(--min-ml-score "${{ inputs.intelligence_min_ml_score }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MIN_ML_SCORE }}" != "" ]]; then
+            CMD+=(--min-ml-score "${{ env.INPUTS_INTELLIGENCE_MIN_ML_SCORE }}")
           fi
-          if [[ "${{ inputs.intelligence_min_logic_chain_score }}" != "" ]]; then
-            CMD+=(--min-logic-chain-score "${{ inputs.intelligence_min_logic_chain_score }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MIN_LOGIC_CHAIN_SCORE }}" != "" ]]; then
+            CMD+=(--min-logic-chain-score "${{ env.INPUTS_INTELLIGENCE_MIN_LOGIC_CHAIN_SCORE }}")
           fi
-          if [[ "${{ inputs.intelligence_min_ai_score }}" != "" ]]; then
-            CMD+=(--min-ai-score "${{ inputs.intelligence_min_ai_score }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MIN_AI_SCORE }}" != "" ]]; then
+            CMD+=(--min-ai-score "${{ env.INPUTS_INTELLIGENCE_MIN_AI_SCORE }}")
           fi
-          if [[ "${{ inputs.intelligence_min_agi_readiness_score }}" != "" ]]; then
-            CMD+=(--min-agi-readiness-score "${{ inputs.intelligence_min_agi_readiness_score }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MIN_AGI_READINESS_SCORE }}" != "" ]]; then
+            CMD+=(--min-agi-readiness-score "${{ env.INPUTS_INTELLIGENCE_MIN_AGI_READINESS_SCORE }}")
           fi
-          if [[ "${{ inputs.intelligence_max_contested_ratio }}" != "" ]]; then
-            CMD+=(--max-contested-ratio "${{ inputs.intelligence_max_contested_ratio }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_MAX_CONTESTED_RATIO }}" != "" ]]; then
+            CMD+=(--max-contested-ratio "${{ env.INPUTS_INTELLIGENCE_MAX_CONTESTED_RATIO }}")
           fi
-          if [[ "${{ inputs.intelligence_allowed_decision_states }}" != "" ]]; then
-            CMD+=(--allowed-decision-states "${{ inputs.intelligence_allowed_decision_states }}")
+          if [[ "${{ env.INPUTS_INTELLIGENCE_ALLOWED_DECISION_STATES }}" != "" ]]; then
+            CMD+=(--allowed-decision-states "${{ env.INPUTS_INTELLIGENCE_ALLOWED_DECISION_STATES }}")
           fi
-          if [[ "${{ inputs.enforce_intelligence_readiness }}" == "true" ]]; then
+          if [[ "${{ env.INPUTS_ENFORCE_INTELLIGENCE_READINESS }}" == "true" ]]; then
             CMD+=(--enforce)
           fi
           "${CMD[@]}"
 
       - name: Compute intelligence promotion advisory (non-blocking)
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 tent_io/harness/tools/compute_intelligence_promotion_advisory.py \
             --promotion-decision "tent_io/harness/reports/expansion/promotion_decision.current.json" \
@@ -964,12 +1792,12 @@ jobs:
             --intelligence-regression "tent_io/harness/reports/expansion/intelligence_regression.current.json" \
             --intelligence-regression-trend "tent_io/harness/reports/expansion/intelligence_regression_trend.current.json" \
             --history-out "tent_io/harness/reports/expansion/intelligence_promotion_advisory.history.ndjson" \
-            --required-promote-candidate-streak "${{ inputs.intelligence_advisory_required_streak }}" \
+            --required-promote-candidate-streak "${{ env.INPUTS_INTELLIGENCE_ADVISORY_REQUIRED_STREAK }}" \
             --out-json "tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.json" \
             --out-md "tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.md"
 
       - name: Write pre-alarm decision summary (always before hard gate)
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 - <<'PY'
           import json
@@ -1001,8 +1829,8 @@ jobs:
               lines.append("- external_compare: `missing`")
           if decision_path.exists():
               dec = json.loads(decision_path.read_text(encoding="utf-8"))
-              enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
-              enforce_advisory = "${{ inputs.enforce_intelligence_promotion_advisory }}" == "true"
+              enforce_policy = "${{ env.INPUTS_ENFORCE_PROMOTION_DECISION_POLICY }}" == "true"
+              enforce_advisory = "${{ env.INPUTS_ENFORCE_INTELLIGENCE_PROMOTION_ADVISORY }}" == "true"
               promotion_action = "promote_if_hard_gates_pass"
               if enforce_policy and dec.get("promotion_allowed") is not True:
                   promotion_action = "blocked_by_policy"
@@ -1101,6 +1929,181 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Promotion proposal — read flag
+        id: promotion_proposal_flag
+        if: ${{ success() && hashFiles('promotion_proposal.flag') != '' }}
+        run: |
+          echo "state=$(cat promotion_proposal.flag)" >> "$GITHUB_OUTPUT"
+
+      - name: Promotion proposal — PR two-run confirmation
+        id: proposal_pr_two_run
+        if: ${{ success() && github.event_name == 'pull_request' && hashFiles('promotion_proposal.flag') != '' }}
+        run: |
+          set -euo pipefail
+          state=$(cat promotion_proposal.flag)
+          confirmed=false
+          # Suffix streak of TRIGGERED lines (resets on NOT_TRIGGERED or blank); require >= 2 at EOF.
+          streak=0
+          if [[ -f promotion_proposal.history ]]; then
+            streak=$(awk 'BEGIN{c=0} {gsub(/\r/,""); if ($0=="TRIGGERED") c++; else c=0} END{print c+0}' promotion_proposal.history)
+          fi
+          echo "triggered_suffix_streak=$streak" >> "$GITHUB_OUTPUT"
+          if [[ "$state" == "TRIGGERED" && "$streak" -ge 2 ]]; then
+            confirmed=true
+          fi
+          echo "confirmed=$confirmed" >> "$GITHUB_OUTPUT"
+          stability_raw="_"
+          class_raw="_"
+          if [[ -f tent_io/harness/reports/expansion/promotion_decision.current.json ]]; then
+            read -r stability_raw class_raw < <(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
+          st = "_"
+          cl = "_"
+          try:
+              d = json.loads(p.read_text(encoding="utf-8"))
+              stv = d.get("tie_break_stability_score")
+              if isinstance(stv, (int, float)):
+                  st = f"{float(stv):0.3f}"
+              cl = str(d.get("tie_break_trajectory_dynamical_class", "_"))
+          except Exception:
+              pass
+          print(st, cl)
+          PY
+            )
+          fi
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            gate_label="not passed"
+            if [[ "$confirmed" == true ]]; then
+              gate_label="passed"
+            fi
+            req_streak=2
+            num_disp=$streak
+            if [[ "$num_disp" -gt "$req_streak" ]]; then
+              num_disp=$req_streak
+            fi
+            if [[ "$confirmed" == true ]]; then
+              status_line="- **Status:** 🟢 CONFIRMED (${num_disp}/${req_streak})"
+            elif [[ "$state" == "TRIGGERED" ]]; then
+              status_line="- **Status:** 🟡 BUILDING (${num_disp}/${req_streak})"
+            else
+              status_line="- **Status:** 🔴 NOT TRIGGERED"
+            fi
+            {
+              echo ""
+              echo "## PR promotion confirmation (advisory)"
+              echo ""
+              echo "$status_line"
+              echo "- **Suffix streak (TRIGGERED at EOF):** ${streak} (required ≥ 2 for optional PR comment)"
+              echo "- **This-run flag:** ${state}"
+              echo "- **Stability:** ${stability_raw} | **Class:** ${class_raw}"
+              echo "- **PR comment gate:** ${gate_label}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Apply promotion labels (PR)
+        if: ${{ success() && github.event_name == 'pull_request' && steps.proposal_pr_two_run.outcome == 'success' }}
+        uses: actions/github-script@v7
+        env:
+          PR_CONFIRMED: ${{ steps.proposal_pr_two_run.outputs.confirmed }}
+          PR_FLAG_STATE: ${{ steps.promotion_proposal_flag.outputs.state }}
+        with:
+          script: |
+            const issue_number = context.payload.pull_request?.number ?? context.issue?.number;
+            if (!issue_number) {
+              console.log("No PR number; skipping labels.");
+              return;
+            }
+            const confirmed = process.env.PR_CONFIRMED === "true";
+            const flagState = process.env.PR_FLAG_STATE || "";
+            const building = flagState === "TRIGGERED";
+            const fs = require("fs");
+            let trajectoryClass = null;
+            let stabilityScore = null;
+            try {
+              const raw = fs.readFileSync("tent_io/harness/reports/expansion/promotion_decision.current.json", "utf8");
+              const dec = JSON.parse(raw);
+              trajectoryClass = dec?.tie_break_trajectory_dynamical_class ?? null;
+              const s = dec?.tie_break_stability_score;
+              if (typeof s === "number") stabilityScore = s;
+            } catch (e) {
+              // Missing or unreadable decision artifact keeps unstable=false by default.
+            }
+            const unstable =
+              trajectoryClass === "oscillating_boundary" ||
+              trajectoryClass === "large_swing_instability" ||
+              (typeof stabilityScore === "number" && stabilityScore < 0.4);
+
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = new Set(labels.map((l) => l.name));
+
+            async function addLabel(name) {
+              if (existing.has(name)) return;
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                labels: [name],
+              });
+              existing.add(name);
+            }
+
+            async function removeLabel(name) {
+              if (!existing.has(name)) return;
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                name: name,
+              });
+              existing.delete(name);
+            }
+
+            const READY = "promotion:ready";
+            const BUILDING = "promotion:building";
+            const UNSTABLE = "promotion:unstable";
+
+            if (confirmed) {
+              await addLabel(READY);
+              await removeLabel(BUILDING);
+              await removeLabel(UNSTABLE);
+            } else if (building) {
+              await addLabel(BUILDING);
+              await removeLabel(READY);
+              await removeLabel(UNSTABLE);
+            } else if (unstable) {
+              await addLabel(UNSTABLE);
+              await removeLabel(READY);
+              await removeLabel(BUILDING);
+            } else {
+              await removeLabel(READY);
+              await removeLabel(BUILDING);
+              await removeLabel(UNSTABLE);
+            }
+
+      - name: Promotion proposal comment
+        if: ${{ success() && github.event_name == 'pull_request' && steps.promotion_proposal_flag.outputs.state == 'TRIGGERED' && steps.proposal_pr_two_run.outputs.confirmed == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const n = context.payload.pull_request?.number ?? context.issue?.number;
+            if (!n) {
+              console.log("No pull request number; skipping comment.");
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: n,
+              body: "🚀 **Promotion proposal triggered** (advisory, two consecutive runs)\n\nThis PR has two back-to-back advisory proposal signals on this branch. See the latest workflow run summary for readiness, stability, and candidate details. This does not change baseline or override policy gates.",
+            });
+
       - name: Baseline drift alarm (expansion-sweep)
         run: |
           python3 tent_io/harness/check_llt_baseline_alarm.py \
@@ -1128,9 +2131,9 @@ jobs:
           audit_history = Path("tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson")
           decision = Path("tent_io/harness/reports/expansion/promotion_decision.current.json")
           advisory = Path("tent_io/harness/reports/expansion/intelligence_promotion_advisory.current.json")
-          enforce_policy = "${{ inputs.enforce_promotion_decision_policy }}" == "true"
-          enforce_advisory = "${{ inputs.enforce_intelligence_promotion_advisory }}" == "true"
-          external_enabled = "${{ inputs.enable_external_eval }}" == "true"
+          enforce_policy = "${{ env.INPUTS_ENFORCE_PROMOTION_DECISION_POLICY }}" == "true"
+          enforce_advisory = "${{ env.INPUTS_ENFORCE_INTELLIGENCE_PROMOTION_ADVISORY }}" == "true"
+          external_enabled = "${{ env.INPUTS_ENABLE_EXTERNAL_EVAL }}" == "true"
 
           def load_json(path: Path) -> dict:
               if not path.exists():
@@ -1221,17 +2224,17 @@ jobs:
           PY
 
       - name: Trim promotion history (optional)
-        if: ${{ inputs.promotion_history_keep_last != '' }}
+        if: ${{ env.INPUTS_PROMOTION_HISTORY_KEEP_LAST != '' }}
         run: |
           python3 tent_io/harness/trim_llt_expansion_promotion_history.py \
             --path "tent_io/harness/reports/expansion/llt_expansion_pointer_promotion_history.ndjson" \
-            --keep-last "${{ inputs.promotion_history_keep_last }}"
+            --keep-last "${{ env.INPUTS_PROMOTION_HISTORY_KEEP_LAST }}"
 
       - name: Build promotion leaderboard summary
         run: |
-          CMD=(python3 tent_io/harness/summarize_llt_expansion_promotions.py --sort-by "${{ inputs.promotion_summary_sort_by }}")
-          if [[ "${{ inputs.promotion_summary_history_window }}" != "" ]]; then
-            CMD+=(--history-window "${{ inputs.promotion_summary_history_window }}")
+          CMD=(python3 tent_io/harness/summarize_llt_expansion_promotions.py --sort-by "${{ env.INPUTS_PROMOTION_SUMMARY_SORT_BY }}")
+          if [[ "${{ env.INPUTS_PROMOTION_SUMMARY_HISTORY_WINDOW }}" != "" ]]; then
+            CMD+=(--history-window "${{ env.INPUTS_PROMOTION_SUMMARY_HISTORY_WINDOW }}")
           fi
           "${CMD[@]}"
 
@@ -1250,8 +2253,8 @@ jobs:
 
           best = payload.get("best_profile") if isinstance(payload.get("best_profile"), dict) else {}
           trend = payload.get("trend") if isinstance(payload.get("trend"), dict) else {}
-          floor = float("${{ inputs.min_best_final_test_acc }}")
-          delta_input = "${{ inputs.min_delta_vs_previous_best }}"
+          floor = float("${{ env.INPUTS_MIN_BEST_FINAL_TEST_ACC }}")
+          delta_input = "${{ env.INPUTS_MIN_DELTA_VS_PREVIOUS_BEST }}"
 
           best_acc = best.get("final_test_acc")
           floor_passes = isinstance(best_acc, (int, float)) and float(best_acc) >= floor
@@ -1319,13 +2322,13 @@ jobs:
               f"- delta_guard_passes: `{delta_guard_passes}`",
               f"- delta_guard_status: **{delta_status}** {delta_badge}",
               "- regression_thresholds: "
-              f"`final=${{ inputs.regression_min_delta_final_test_acc }}, "
-              f"mmlu=${{ inputs.regression_min_delta_mmlu_test_acc }}, "
-              f"conv=${{ inputs.regression_min_delta_conversational_test_acc }}, "
-              f"drift=${{ inputs.regression_max_delta_drift }}`",
-              f"- allow_baseline_change: `${{ inputs.allow_baseline_change }}`",
-              f"- enforce_promotion_decision_policy: `${{ inputs.enforce_promotion_decision_policy }}`",
-              f"- enforce_intelligence_promotion_advisory: `${{ inputs.enforce_intelligence_promotion_advisory }}`",
+              f"`final=${{ env.INPUTS_REGRESSION_MIN_DELTA_FINAL_TEST_ACC }}, "
+              f"mmlu=${{ env.INPUTS_REGRESSION_MIN_DELTA_MMLU_TEST_ACC }}, "
+              f"conv=${{ env.INPUTS_REGRESSION_MIN_DELTA_CONVERSATIONAL_TEST_ACC }}, "
+              f"drift=${{ env.INPUTS_REGRESSION_MAX_DELTA_DRIFT }}`",
+              f"- allow_baseline_change: `${{ env.INPUTS_ALLOW_BASELINE_CHANGE }}`",
+              f"- enforce_promotion_decision_policy: `${{ env.INPUTS_ENFORCE_PROMOTION_DECISION_POLICY }}`",
+              f"- enforce_intelligence_promotion_advisory: `${{ env.INPUTS_ENFORCE_INTELLIGENCE_PROMOTION_ADVISORY }}`",
               "",
               f"Artifacts: `{summary_path}`, `tent_io/harness/reports/expansion/llt_expansion_sweep.current.md`",
           ]
@@ -1351,7 +2354,7 @@ jobs:
           board = payload.get("leaderboard") if isinstance(payload.get("leaderboard"), list) else []
           top = board[0] if board else {}
           sort_by = payload.get("sort_by")
-          top_k_raw = "${{ inputs.promotion_summary_top_k }}"
+          top_k_raw = "${{ env.INPUTS_PROMOTION_SUMMARY_TOP_K }}"
           try:
               top_k = max(1, int(top_k_raw))
           except Exception:
@@ -1392,7 +2395,7 @@ jobs:
           PY
 
       - name: Write external eval summary snippet
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 - <<'PY'
           import json
@@ -1431,7 +2434,7 @@ jobs:
           PY
 
       - name: Write promotion decision summary snippet
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 - <<'PY'
           import json
@@ -1472,7 +2475,7 @@ jobs:
           PY
 
       - name: Write intelligence scoring summary snippet
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 - <<'PY'
           import json
@@ -1508,15 +2511,15 @@ jobs:
               f"- agi_readiness_score: `{scores.get('agi_readiness_score')}`",
               f"- intelligence_regression_status: `{regression.get('status')}`",
               f"- intelligence_regression_failures: `{regression.get('failures')}`",
-              f"- enforce_intelligence_regression: `${{ inputs.enforce_intelligence_regression }}`",
+              f"- enforce_intelligence_regression: `${{ env.INPUTS_ENFORCE_INTELLIGENCE_REGRESSION }}`",
               f"- intelligence_regression_trend_status: `{regression_trend.get('status')}`",
               f"- intelligence_regression_regime_label: `{regression_trend.get('regime_label')}`",
               f"- intelligence_regression_alarm_ratio_recent: `{regression_trend.get('alarm_ratio_recent')}`",
               f"- intelligence_regression_consecutive_alarm_recent: `{regression_trend.get('consecutive_alarm_recent')}`",
-              f"- enforce_intelligence_regression_trend: `${{ inputs.enforce_intelligence_regression_trend }}`",
+              f"- enforce_intelligence_regression_trend: `${{ env.INPUTS_ENFORCE_INTELLIGENCE_REGRESSION_TREND }}`",
               f"- intelligence_readiness_status: `{readiness.get('status')}`",
               f"- intelligence_readiness_failures: `{readiness.get('failures')}`",
-              f"- enforce_intelligence_readiness: `${{ inputs.enforce_intelligence_readiness }}`",
+              f"- enforce_intelligence_readiness: `${{ env.INPUTS_ENFORCE_INTELLIGENCE_READINESS }}`",
               "",
               f"Artifact: `{score_path}`",
               "Trend: `tent_io/harness/reports/expansion/intelligence_scoring.current.md`",
@@ -1532,7 +2535,7 @@ jobs:
           PY
 
       - name: Write intelligence promotion advisory summary snippet
-        if: ${{ inputs.enable_external_eval }}
+        if: ${{ env.INPUTS_ENABLE_EXTERNAL_EVAL == 'true' }}
         run: |
           python3 - <<'PY'
           import json

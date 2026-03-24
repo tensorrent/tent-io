@@ -13,6 +13,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+# harness/training -> harness/fixtures/training (repo-relative default for --out-dir)
+_DEFAULT_OUT_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "training"
+
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,8 +143,8 @@ def main() -> int:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("/Users/coo-koba42/dev/tent_io/harness/fixtures/training"),
-        help="Output directory for normalized JSONL corpora.",
+        default=_DEFAULT_OUT_DIR,
+        help="Output directory for normalized JSONL corpora (default: harness/fixtures/training next to this script).",
     )
     args = parser.parse_args()
 

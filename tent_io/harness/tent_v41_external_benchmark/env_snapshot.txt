@@ -1,5 +1,5 @@
 === TENT v4.1 External Benchmark — Environment Snapshot ===
-2026-03-21T17:56:20Z
+2026-03-24T12:22:30Z
 Darwin Mac.lan 24.3.0 Darwin Kernel Version 24.3.0: Thu Jan  2 20:24:23 PST 2025; root:xnu-11215.81.4~3/RELEASE_ARM64_T6031 arm64
 ProductName:		macOS
 ProductVersion:		15.3.2
@@ -12,9 +12,9 @@ rustc 1.92.0 (ded5c06cf 2025-12-08)
 no wasm-pack
 /Users/coo-koba42/.antigravity/antigravity/bin/antigravity
 ---
-pwd: /Users/coo-koba42/dev/tent_io/harness/tent_v41_external_benchmark
-TENT_IO_ROOT: /Users/coo-koba42/dev/tent_io
-Not a git repo: /Users/coo-koba42/dev/tent_io
+pwd: /Users/coo-koba42/dev/tensorrent_tent_io_publish/tent_io/harness/tent_v41_external_benchmark
+TENT_IO_ROOT: /Users/coo-koba42/dev/tensorrent_tent_io_publish/tent_io
+Not a git repo: /Users/coo-koba42/dev/tensorrent_tent_io_publish/tent_io
 ---
 --- Core engine file size ---
 CORE_BINARY not set or file missing. Set CORE_BINARY=/path/to/tent_core.wasm

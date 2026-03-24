@@ -1,0 +1,24 @@
+{
+  "status": "ok",
+  "timestamp_utc": "2026-03-24T13:50:41Z",
+  "unittest_exit_code": 0,
+  "unittest_summary": "ok",
+  "fixture_validation": {
+    "fixture_path": "/Users/coo-koba42/dev/tensorrent_tent_io_publish/tent_io/harness/tests/fixtures/sweep_full_spectrum.json",
+    "status": "ok",
+    "missing_score_keys": [],
+    "scoring_version": "1.1",
+    "scores": {
+      "ml_intelligence_score": 0.7190000000000001,
+      "logic_chain_score": 0.77,
+      "ai_intelligence_score": 0.44545000000000007,
+      "agi_readiness_score": 0.5357574999999999
+    }
+  }
+}
+
+....................................
+----------------------------------------------------------------------
+Ran 36 tests in 0.866s
+
+OK

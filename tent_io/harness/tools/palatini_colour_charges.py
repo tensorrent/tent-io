@@ -180,6 +180,7 @@ R_torsion = expm(theta * S01)
 R_lorentz = expm(theta * A01)
 
 # Physical SU(3) rotation: needs i*S + A (complexified)
+G_su3 = 1j * S01 + A01  # This is 2*iE_01 - effectively
 # Actually the su(3) generator for Red→Blue is:
 # In Gell-Mann basis: (λ₁ + iλ₂)/2 = E_01
 # As su(3) element: iλ₁/2 = i(E01+E10)/2 = iS01/2

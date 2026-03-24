@@ -114,6 +114,68 @@ When **`--tie-break-stability-gate`** is set, **`contested_external_override`** 
 
 The codebase implements **slot agreement + margins + streaks** (conservative path). A weighted composite or dual baseline would be a **separate, explicit change** (new inputs + documented formula)—not implied by current scripts.
 
+## CI summary: promotion proposal (advisory)
+
+In `.github/workflows/tent-io-llt-expansion.yml`, the step summary may include **`## 🚀 Promotion Proposal`**. This is a **recommendation only**; it does not change baselines or override `promotion_allowed` / regression gates.
+
+**Trigger (all required, as implemented in the workflow):**
+
+- Readiness score (same advisory scalar as **Promotion Readiness Signal**) ≥ **0.80**
+- Current run `tie_break_stability_score` ≥ **0.7**
+- Short-window **consistency** (from rolling trend over `trend_window`) ≥ **0.7**
+
+When triggered, the summary lists **`Candidate`** from `external_favored_slot` (`expand_s1` / `expand_s2`) when present; otherwise `unknown`.
+
+**Artifact:** the workflow writes **`promotion_proposal.flag`** in the workspace root with `TRIGGERED` or `NOT_TRIGGERED` (also written when the promotion decision JSON is missing). Downstream steps or reusable workflows can read this file.
+
+**PR history (two-run confirmation):** On **`pull_request`**, each run also appends one line (`TRIGGERED` or `NOT_TRIGGERED`) to **`promotion_proposal.history`**. The workflow restores a per-PR copy via **`actions/cache`** (`key: promo-proposal-pr-<number>`) so consecutive runs on the same PR can see prior lines. An advisory **PR comment** posts only when **`promotion_proposal.flag`** is `TRIGGERED` **and** the **suffix streak** of `TRIGGERED` lines at end-of-file is **≥ 2**: scan top-to-bottom, increment on `TRIGGERED`, reset to 0 on any other line; the value at EOF must be ≥ 2 (same idea as “two consecutive `TRIGGERED` lines at the tail,” with a single rule for edge cases like stray blank lines). **Note:** GitHub cache eviction and fork/permissions limits can reset or block this; the summary remains authoritative.
+
+**PR comment (optional):** `.github/workflows/tent-io-llt-expansion.yml` posts an advisory comment when the two-run condition above **and** `github.event_name == 'pull_request'` are satisfied.
+
+On PR runs, the workflow summary also includes **`## PR promotion confirmation (advisory)`** with a **Status** line: 🟢 **CONFIRMED (2/2)** or 🟡 **BUILDING (n/2)** (suffix streak clamped to the required length 2), or 🔴 **NOT TRIGGERED** without a fraction; plus suffix streak, this-run flag, and whether the PR comment gate passed—so the decision is visible without opening logs.
+
+The workflow summary also surfaces instability in decision compression sections for visibility only:
+
+- Under **`## 🚦 Promotion Readiness Signal`**, it emits an inline warning when instability is detected.
+- Under **`## 🚀 Promotion Proposal`**, it mirrors the warning as advisory context.
+- Detection is derived from `tie_break_trajectory_dynamical_class` in `{oscillating_boundary, large_swing_instability}` or `tie_break_stability_score < 0.4`.
+- This warning is diagnostic-only and does **not** change readiness/proposal thresholds or policy gates.
+
+**Triggers:** The workflow runs `expansion-sweep` on **`workflow_dispatch`** or **`pull_request`** (types `opened`, `synchronize`, `reopened`) with a **`paths`** filter on `tent_io/**` and this workflow file, so unrelated edits do not start the sweep. Other jobs (e.g. `auto-all-compare`) remain dispatch-only unless changed separately.
+
+**Inputs on PRs:** The `inputs` context is only populated for `workflow_dispatch`. The job runs `tent_io/harness/scripts/resolve_workflow_dispatch_inputs.py` to write `INPUTS_*` environment variables from `github.event.inputs` when dispatch, otherwise from the same defaults as the workflow YAML (keep the script’s `DEFAULTS` in sync when adding or changing inputs).
+
+**Fork PRs:** Comment posting may require appropriate token permissions and repository settings; advisory behavior is unchanged if the comment step cannot run.
+
+## PR labels (optional visibility)
+
+When **`expansion-sweep`** runs on a **`pull_request`** and the PR confirmation step succeeds, **`Apply promotion labels (PR)`** updates issue labels (advisory; does not change baselines or merge):
+
+| Condition | Action |
+|-----------|--------|
+| `confirmed` is true (suffix streak ≥ 2 and this run `TRIGGERED`) | Add **`promotion:ready`**, remove **`promotion:building`** and **`promotion:unstable`** |
+| Else if `promotion_proposal.flag` is **`TRIGGERED`** | Add **`promotion:building`**, remove **`promotion:ready`** and **`promotion:unstable`** |
+| Else if unstable (`tie_break_trajectory_dynamical_class` is `oscillating_boundary`/`large_swing_instability`, or `tie_break_stability_score < 0.4`) | Add **`promotion:unstable`**, remove **`promotion:ready`** and **`promotion:building`** |
+| Else | Remove **`promotion:ready`**, **`promotion:building`**, and **`promotion:unstable`** |
+
+**Repo setup:** Create **`promotion:ready`**, **`promotion:building`**, and **`promotion:unstable`** in the repository (or org) label settings so `addLabels` succeeds. If a label is missing, the step may fail until the label exists.
+
+## Post-promotion tracking (advisory)
+
+`tent-io-llt-expansion.yml` step summary includes **`## 📉 Post-Promotion Tracking`** as a read-only check of what happened after the latest promotable decision point in history (`promotion_allowed=true` with `decision_state` in `aligned_ready_for_promotion` or `contested_external_override`).
+
+Current advisory window is the next **5** runs after that promotion point. Reported fields:
+
+- Promoted profile and relative run index
+- Retained dominance rate (`external_favored_slot == promoted_profile`)
+- Win stability (flip-aware)
+- Average pressure (`tie_break_confidence - tie_break_confidence_threshold_effective`)
+- Confidence delta versus the promotion run
+- Current favored slot
+- Status: `🟢 holding`, `🟡 mixed`, or `🔴 degrading`
+
+This section is advisory-only and does **not** change promotion gates, labels, or baseline mutation behavior.
+
 ## Related
 
 - `LLT_GOVERNANCE_AND_EVAL_STACK_WHITEPAPER.md` — artifact paths.

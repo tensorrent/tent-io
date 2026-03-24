@@ -1,11 +1,11 @@
 # TENT v4.1 External Benchmark — SHA-256 manifest
-# Generated: 2026-03-21T17:56:20Z
+# Generated: 2026-03-24T12:22:31Z
 
-8ae79d664fefcfa81ebbd096c253b6046dd40e7be2deb44bd6d57724e2eaad62  env_snapshot.txt
+42445e68ce830806917f70913b40a229be24a98ef937160a7d3c2a8108ff3725  env_snapshot.txt
 # (missing) benchmark_questions_100.json
 # (missing) benchmark_questions_gpqa_100.json
-973412b7e130fac8131ab10fd46ce551d3d2e2b6e017ba25e5382383ad250b78  tent_eval_atomic_logs.json
-f8ad3af6f9ed71d7286e9ab42107fc44e052f9842bb9ab2071d4263d5cf6f4b8  tent_eval_summary.json
+c4a1f7044deafab8bac8272730f74c9500b4d71dc0f2f8cfebf4b58f2a718eea  tent_eval_atomic_logs.json
+5fa2cad9571a6bffc0cf7b02a37790a3fd8aec3ef3c61af3a6c6b238258f3b39  tent_eval_summary.json
 7a35328e7f401a46354a81069d4660a408c92cce89ad4a72333dd79923e5ee94  tent_eval_transcript.txt
 # (missing) network_capture_during_eval.pcap
 # (missing) network_during.txt

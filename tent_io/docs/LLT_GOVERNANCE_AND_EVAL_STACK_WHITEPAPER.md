@@ -61,7 +61,7 @@ It lists:
 - `tent_io/docs/PROMOTION_POLICY_GOVERNANCE.md` — contested vs aligned states, streak defaults, slot agreement policy.
 
 ## 3) Change Discipline
-- Prefer **workflow_dispatch** or branch PRs that exercise `tent-io-llt-expansion.yml` so artifacts are produced under `tent_io/harness/reports/expansion/`.
+- Prefer **workflow_dispatch** or **pull_request** (paths under `tent_io/**` or this workflow file) so `tent-io-llt-expansion.yml` runs and artifacts land under `tent_io/harness/reports/expansion/`. PR runs use the same input defaults as dispatch via `resolve_workflow_dispatch_inputs.py` (see `PROMOTION_POLICY_GOVERNANCE.md`).
 - Treat **`*.current.json`** as **overwrite-per-run** outputs; history lives in **`*.history.ndjson`** or **`*.previous.current.json`** snapshots where implemented.
 - Intelligence thresholds are **optional** until `enforce_*` inputs are set (see `INTELLIGENCE_TUNING.md`).
 

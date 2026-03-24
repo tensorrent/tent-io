@@ -1,0 +1,17 @@
+{
+  "started_at_utc": "2026-03-24T12:22:30Z",
+  "ended_at_utc": "2026-03-24T12:22:31Z",
+  "overall": "PARTIAL",
+  "steps": {
+    "omni_solo": 1,
+    "odin_real_benchmark": 1,
+    "tent_v41_adapter": 1,
+    "tent_v41_env_snapshot": 0,
+    "tent_v41_hash_manifest": 0
+  },
+  "notes": [
+    "A non-zero ODIN or TENT adapter step commonly indicates inference engine is not configured.",
+    "Set ANTIGRAVITY_INFERENCE_URL or ANTIGRAVITY_BIN for ODIN real answers.",
+    "Set TENT inference variables in tent_benchmark_adapter.py for non-stub execution."
+  ]
+}

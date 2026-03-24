@@ -46,7 +46,7 @@ tent_v41_external_benchmark/
 ## Quick start (when home with Antigravity)
 
 1. **Set TENT inference pattern** (one of):
-   - `TENT_INFERENCE_PATTERN=cli` and `TENT_INFERENCE_BIN=/path/to/tent_infer`
+   - `TENT_INFERENCE_PATTERN=cli` and a binary via the shared harness (`HARNESS_CLI_BIN` preferred; see `tent_io/harness/cli_inference_harness.py` and `tent_io/docs/CLI_BINARY_INFERENCE.md`)
    - `TENT_INFERENCE_PATTERN=http` and `TENT_INFERENCE_URL=http://localhost:PORT/infer`
    - `TENT_INFERENCE_PATTERN=stub` (no engine; for pipeline test only)
 

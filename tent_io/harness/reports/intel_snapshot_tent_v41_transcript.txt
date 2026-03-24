@@ -1,0 +1,24 @@
+TENT v4.1 External Benchmark — Transcript
+============================================================
+
+--- builtin-001 (correct=True) ---
+Q: What is the time complexity of binary search?
+Expected: B
+TENT raw: found index file...
+found_layers:{'model.embed_tokens.': True, 'model.layers.0.': True, 'model.layers.1.': True, 'model.layers.2.': True, 'model.layers.3.': True, 'model.layers.4.': True, 'model.layers.5.': True, 'model.layers.6.': True, 'model.layers.7.': True, 'model.layers.8.': True, 'model.layer...
+Extracted: B
+
+--- builtin-002 (correct=True) ---
+Q: Which element has the highest electronegativity?
+Expected: C
+TENT raw: found index file...
+found_layers:{'model.embed_tokens.': True, 'model.layers.0.': True, 'model.layers.1.': True, 'model.layers.2.': True, 'model.layers.3.': True, 'model.layers.4.': True, 'model.layers.5.': True, 'model.layers.6.': True, 'model.layers.7.': True, 'model.layers.8.': True, 'model.layer...
+Extracted: C
+
+--- builtin-003 (correct=True) ---
+Q: In quantum mechanics, the commutator [x, p] equals:
+Expected: B
+TENT raw: found index file...
+found_layers:{'model.embed_tokens.': True, 'model.layers.0.': True, 'model.layers.1.': True, 'model.layers.2.': True, 'model.layers.3.': True, 'model.layers.4.': True, 'model.layers.5.': True, 'model.layers.6.': True, 'model.layers.7.': True, 'model.layers.8.': True, 'model.layer...
+Extracted: B
+

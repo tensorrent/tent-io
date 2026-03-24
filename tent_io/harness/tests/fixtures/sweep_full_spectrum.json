@@ -1,0 +1,12 @@
+{
+  "best_profile": {
+    "profile": "expand_s1",
+    "final_test_acc": 0.72,
+    "final_mmlu_test_acc": 0.68,
+    "final_conversational_logic_test_acc": 0.74,
+    "replay_test_acc": 0.70,
+    "replay_mmlu_test_acc": 0.66,
+    "replay_conversational_logic_test_acc": 0.72,
+    "train_eval_drift": 1e-9
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "status": "ok",
+  "out_json": "/Users/coo-koba42/dev/tensorrent_tent_io_publish/tent_io/harness/reports/intel_benchmark_snapshot.current.json",
+  "out_md": "/Users/coo-koba42/dev/tensorrent_tent_io_publish/tent_io/harness/reports/intel_benchmark_snapshot.current.md"
+}
+

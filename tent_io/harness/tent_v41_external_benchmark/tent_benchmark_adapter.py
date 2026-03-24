@@ -7,7 +7,7 @@ logs per-question atomic JSON, writes summary and human-readable transcript.
 
 Inference pattern (set TENT_INFERENCE_PATTERN and corresponding env):
   stub   — no engine (for pipeline test). No env.
-  cli    — TENT_INFERENCE_BIN=/path/to/tent_infer (subprocess: --prompt PROMPT)
+  cli    — shared harness: set HARNESS_CLI_BIN or INFERENCE_BIN or ANTIGRAVITY_BIN or TENT_INFERENCE_BIN (subprocess: --prompt and --question-id; see tent_io/harness/cli_inference_harness.py)
   http   — TENT_INFERENCE_URL=http://localhost:PORT/infer (POST json {"prompt": "..."})
   wasm   — [future] wasmtime/wasmer
   python — [future] from tent_core import infer
@@ -20,12 +20,20 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+_HARNESS_DIR = Path(__file__).resolve().parent.parent
+if str(_HARNESS_DIR) not in sys.path:
+    sys.path.insert(0, str(_HARNESS_DIR))
+from cli_inference_harness import (  # noqa: E402
+    cli_binary_resolution_hint,
+    resolve_cli_binary,
+    run_cli_inference,
+)
 
 BUNDLE_DIR = Path(__file__).resolve().parent
 DEFAULT_QUESTIONS = BUNDLE_DIR / "benchmark_questions_100.json"
@@ -72,19 +80,6 @@ def infer_stub(prompt: str, question_id: str) -> str:
     return ""
 
 
-def infer_cli(prompt: str, question_id: str, bin_path: str) -> str:
-    r = subprocess.run(
-        [bin_path, "--prompt", prompt],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=str(BUNDLE_DIR),
-    )
-    if r.returncode != 0:
-        return f"[ERROR exit {r.returncode}] {r.stderr or r.stdout or ''}"
-    return (r.stdout or "").strip()
-
-
 def infer_http(prompt: str, question_id: str, url: str) -> str:
     req = urllib.request.Request(
         url,
@@ -100,10 +95,9 @@ def infer_http(prompt: str, question_id: str, url: str) -> str:
 def call_tent(prompt: str, question_id: str) -> str:
     pattern = (os.environ.get("TENT_INFERENCE_PATTERN") or "stub").strip().lower()
     if pattern == "cli":
-        bin_path = os.environ.get("TENT_INFERENCE_BIN", "").strip()
-        if bin_path and Path(bin_path).exists():
-            return infer_cli(prompt, question_id, bin_path)
-        return "[ERROR TENT_INFERENCE_BIN not set or missing]"
+        if resolve_cli_binary():
+            return run_cli_inference(prompt, question_id, cwd=BUNDLE_DIR, timeout=120)
+        return f"[ERROR no CLI binary resolved; set one of {cli_binary_resolution_hint()}]"
     if pattern == "http":
         url = os.environ.get("TENT_INFERENCE_URL", "").strip()
         if url:

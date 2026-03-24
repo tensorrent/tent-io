@@ -7,7 +7,7 @@ Pipeline:
   tent-io harness                 →  wraps with grading + logging
   odin_real_benchmark.py          →  pulls MMLU-Pro questions, runs inference, grades, emits NDJSON + optional spec-sheet
 
-Inference backend: ANTIGRAVITY_INFERENCE_URL (HTTP POST), ANTIGRAVITY_BIN (subprocess), or stub.
+Inference backend: ANTIGRAVITY_INFERENCE_URL (HTTP POST), then shared CLI harness (see ``cli_inference_harness.py``), or stub.
 Atomic output: one JSON object per question (NDJSON) to file or stdout; optional summary + spec-sheet to harness/reports.
 """
 
@@ -56,29 +56,15 @@ def call_inference_http(prompt: str, question_id: str, url: str) -> str:
     return out.get("text") or out.get("response") or str(out)
 
 
-def call_inference_bin(prompt: str, question_id: str, bin_path: str) -> str:
-    """Run Antigravity binary with prompt; read stdout as model answer."""
-    import subprocess
-    r = subprocess.run(
-        [bin_path, "--prompt", prompt, "--question-id", question_id],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=str(ROOT),
-    )
-    if r.returncode != 0:
-        return f"[ERROR exit {r.returncode}] {r.stderr or r.stdout or ''}"
-    return (r.stdout or "").strip()
-
-
 def call_inference(prompt: str, question_id: str) -> str:
-    """Dispatch to HTTP, binary, or stub."""
+    """Dispatch to HTTP, shared CLI harness, or stub."""
     url = os.environ.get("ANTIGRAVITY_INFERENCE_URL", "").strip()
     if url:
         return call_inference_http(prompt, question_id, url)
-    bin_path = os.environ.get("ANTIGRAVITY_BIN", "").strip()
-    if bin_path and Path(bin_path).exists():
-        return call_inference_bin(prompt, question_id, bin_path)
+    from cli_inference_harness import resolve_cli_binary, run_cli_inference
+
+    if resolve_cli_binary():
+        return run_cli_inference(prompt, question_id, cwd=ROOT, timeout=120)
     return call_inference_stub(prompt, question_id)
 
 
